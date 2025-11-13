@@ -1,0 +1,15 @@
+{
+  "name": "fermi-notify-backend",
+  "version": "1.0.0",
+  "description": "Backend for Fermi Notify",
+  "type": "module",
+  "dependencies": {
+    "@azure/communication-email": "^1.1.0",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.16.3"
+  }
+}
