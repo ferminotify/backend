@@ -201,30 +201,6 @@ router.post('/logout', async (req, res) => {
   }
 });
 
-router.get('/profile', authenticateToken, async (req, res) => {
-    const id = req.user.id;
-    try {
-        const user = await pool.query(`
-            SELECT
-            name,
-            surname,
-            email,
-            gender,
-            tags AS keywords,
-            telegram,
-            notifications,
-            notification_preferences,
-            include_similar_tags,
-            notification_day_before,
-            notification_time
-            FROM subscribers WHERE id = $1`, [id]);
-        res.json(user.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Internal error' });
-    }
-});
-
 // Middleware to verify token
 export function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
