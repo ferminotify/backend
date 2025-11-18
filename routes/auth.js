@@ -212,8 +212,10 @@ router.post('/login', async (req, res) => {
         console.error('Failed to update last_login for user', user.id, e);
     }
 
-    // TEMP TODO
-    res.json({ token, refreshToken, onboarding: user.notifications == -1  });
+    // TEMP use flag onboarding for all users, then use flag notification == -1 for first login TODO
+    res.json({ token, refreshToken, onboarding: !user.onboarding });
+    // update onboarding set to true after first login
+    await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [user.id]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal error' });
