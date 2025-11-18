@@ -18,6 +18,7 @@ router.put('/add', async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    user.tags = user.tags || [];
     if (!user.tags.includes(keyword)) {
       user.tags.push(keyword);
       await pool.query('UPDATE subscribers SET tags = $1 WHERE id = $2', [user.tags, userId]);
@@ -25,6 +26,7 @@ router.put('/add', async (req, res) => {
 
     res.status(200).json({ message: 'Keyword added successfully' });
   } catch (error) {
+    console.error('Error adding keyword:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
