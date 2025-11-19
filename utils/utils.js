@@ -80,5 +80,46 @@ async function incrementNumberNotification(telegramId){
   }
 }
 
+async function userExistsByEmail(email){
+  try {
+    const res = await pool.query(
+      `SELECT * FROM subscribers
+        WHERE email = $1`,
+      [email]
+    );
+    return res.rows[0];
+  } catch (err) {
+    console.error("ERR USER EXISTS BY EMAIL " + email + ": " + err.stack);
+  }
+}
 
-export { getUserEmailWithTelegramID, getNumberNotification, getGenderByEmail, getFirstNameByEmail, getUnsubscribeInfoByEmail, incrementNumberNotification };
+async function verifyUserOTP(email, otp) {
+  try {
+    const RES = await pool.query(
+      `SELECT secret_temp, secret_temp_timestamp FROM subscribers WHERE email = $1`,
+      [email]
+    );
+    if (RES.rows.length === 0) {
+      return "Email non registrata";
+    }
+    const { secret_temp, secret_temp_timestamp } = RES.rows[0];
+    const currentTime = Date.now();
+    const otpValidityDuration = 15 * 60 * 1000; // 15 minutes in milliseconds
+
+    if (currentTime - new Date(secret_temp_timestamp).getTime() > otpValidityDuration) {
+      return "OTP scaduto";
+    }
+
+    if (secret_temp !== otp) {
+      return "OTP non valido";
+    }
+
+    return "OK";
+  } catch (err) {
+    console.error("ERR VERIFY USER OTP " + email + ": " + err.stack);
+    return "Errore durante la verifica dell'OTP";
+  }
+}
+
+
+export { getUserEmailWithTelegramID, getNumberNotification, getGenderByEmail, getFirstNameByEmail, getUnsubscribeInfoByEmail, incrementNumberNotification, userExistsByEmail, verifyUserOTP };

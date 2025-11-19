@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import authenticateToken from './routes/auth.js';
+import authRouter, { authenticateToken } from './routes/auth.js';
 import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
 
@@ -13,7 +13,8 @@ app.use(express.json());
 
 app.use(express.urlencoded({ extended: true }));
 
+app.use('/user/auth', authRouter);
+
 app.use('/user', authenticateToken, userRouter);
-app.use('/push', pushRouter);
 
 app.listen(3001, () => console.log('Server running on port 3001'));

@@ -1,7 +1,6 @@
 import express from 'express';
 import pool from '../db.js';
 import dotenv from 'dotenv';
-import authRouter, { authenticateToken } from './auth.js'
 import keywordRouter from './keyword.js';
 import preferencesRouter from './preferences.js';
 import TelegramRouter from './telegram.js';
@@ -9,7 +8,7 @@ dotenv.config();
 
 const router = express.Router();
 
-router.get('/profile', authenticateToken, async (req, res) => {
+router.get('/profile', async (req, res) => {
     const id = req.user.id;
     try {
         const user = await pool.query(`
@@ -33,16 +32,16 @@ router.get('/profile', authenticateToken, async (req, res) => {
     }
 });
 
-router.use("/auth", authRouter);
-
 // mount keyword routes under /keyword with authentication
-router.use('/keyword', authenticateToken, keywordRouter);
+router.use('/keyword', keywordRouter);
 
-router.use("/preferences", authenticateToken, preferencesRouter);
+router.use("/preferences", preferencesRouter);
 
-router.use("/telegram", authenticateToken, TelegramRouter);
+router.use("/telegram", TelegramRouter);
 
-router.post('/edit', authenticateToken, async (req, res) => {
+app.use('/push', pushRouter);
+
+router.post('/edit', async (req, res) => {
     const userId = req.user.id;
     const { name, surname, gender } = req.body;
 

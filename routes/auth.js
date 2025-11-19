@@ -15,6 +15,8 @@ import {
     getFirstNameByEmail,
     getUnsubscribeInfoByEmail,
     incrementNumberNotification,
+    userExistsByEmail,
+    verifyUserOTP
 } from '../utils/utils.js';
 import crypto from 'crypto';
 dotenv.config();
@@ -222,7 +224,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.post('/refresh_token', async (req, res) => {
+router.post('/refresh_token', authenticateToken, async (req, res) => {
     const { refreshToken } = req.body;
     try {
         const result = await pool.query(
@@ -254,7 +256,7 @@ router.post('/refresh_token', async (req, res) => {
     }
 });
 
-router.post('/logout', async (req, res) => {
+router.post('/logout', authenticateToken, async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) return res.status(400).json({ error: 'No refresh token provided' });
   try {
@@ -264,6 +266,102 @@ router.post('/logout', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Internal error' });
   }
+});
+
+router.post('/request-change-password', async (req, res) => {
+    let { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email non fornita' });
+    email = email.trim().toLowerCase();
+    try {
+        const user = await userExistsByEmail(email);
+        if (!user) return res.status(404).json({ error: 'Email non registrata' });
+        const name = user.name || '';
+        if (!name) return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
+
+        // Generate a 6-char uppercase code (A-Z0-9). Keep existing style.
+        const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        try {
+            await pool.query(
+                `UPDATE subscribers SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP WHERE email = $2;`,
+                [randomCode, email]
+            );
+        } catch (err) {
+            console.error('ERR SET TEMP SECRET ' + email + ': ' + err);
+            return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
+        }
+
+        try {
+            await sendMailAsync(
+                email,
+                `Codice OTP [${randomCode}]`,
+                `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"border=0 cellpadding=0 cellspacing=0 width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=https://fn.lkev.in><img src="https://fn.lkev.in/email/v3/logo-long-allmuted-trasp.png" style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"border=0 cellpadding=0 cellspacing=0><tr><td><h2 style="margin:10px 0">Il tuo codice di sicurezza</h2><tr><td style=text-align:left><p style=margin-bottom:0>Ciao ${name},<p style=line-height:1.3;margin-top:10px;margin-bottom:10px>il tuo <b>codice di sicurezza OTP</b> è:<table style="margin-left:auto;margin-right:auto;padding:5px 0;text-align:center;border-radius:10px"><tr><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[0]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[1]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[2]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[3]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[4]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[5]}</h1></table><tr><td style=font-size:13px;text-align:center><p style=margin-bottom:15px>Il codice scadrà tra <b>15 minuti</b>.<br>Ti inviamo questo codice perché hai richiesto di cambiare la password del tuo account. Se non hai richiesto di cambiare la password, puoi ignorare questa email.</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=https://fn.lkev.in/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=https://instagram.com/ferminotify style=color:#004a77><i>@ferminotify</i></a>.</p><a href=https://fn.lkev.in><img src="https://fn.lkev.in/email/v3/icon-allmuted.png" style=height:35px;margin-bottom:5px></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=https://fn.lkev.in style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrato a Fermi Notify. Puoi disattivare le notifiche via mail <a href="https://fn.lkev.in/user/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}" style=color:#004a77>qui</a>.</table></main><html>`,
+                `Ciao ${name}, il tuo codice di sicurezza OTP per reimpostare la password è: ${randomCode}. Se non hai richiesto di cambiare la password, puoi ignorare questa email.`,
+                {
+                    'List-Unsubscribe': `<mailto:unsubscribe@fn.lkev.in?subject=Unsubscribe%20%3A%28&id=${user.id}&token=${user.unsub_token}&email=${email}>, <${URL}/auth/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}>`
+                }
+            );
+        } catch (mailErr) {
+            console.error('ERR SEND RESET EMAIL ' + email + ': ' + mailErr);
+            return res.status(500).json({ error: 'Si è verificato un errore nell\'invio dell\'email.' });
+        }
+
+        return res.status(200).json({ message: 'Ti abbiamo inviato un codice per reimpostare la password. Controlla anche lo SPAM.' });
+    } catch (err) {
+        console.error('ERR REQ CNG PSW', email, ':', err);
+        return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
+    }
+});
+
+router.post('/otp-change-password', async (req, res) => {
+    let { email, otp } = req.body;
+    if (!email || !otp) return res.status(400).json({ error: 'Email o codice OTP non forniti' });
+    email = email.trim().toLowerCase();
+    otp = otp.trim().toUpperCase();
+    try {
+        const valid = await verifyUserOTP(email, otp);
+
+        if (valid !== "OK") {
+            return res.status(400).json({ error: valid });
+        }
+
+        return res.sendStatus(200);
+    } catch (err) {
+        console.error('ERR OTP CNG PSW', email, ':', err);
+        return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
+    }
+});
+
+router.post('/new-change-password', async (req, res) => {
+    let { email, otp, newPassword, newPassword2 } = req.body;
+    if (!email || !otp || !newPassword || !newPassword2)
+        return res.status(400).json({ error: 'Dati mancanti' });
+    email = email.trim().toLowerCase();
+    otp = otp.trim().toUpperCase();
+
+    if (newPassword !== newPassword2)
+        return res.status(400).json({ error: 'Le password non corrispondono' });
+    
+    if (newPassword.length < 6)
+        return res.status(400).json({ error: 'La password deve essere lunga almeno 6 caratteri' });
+    
+    try {
+        const valid = await verifyUserOTP(email, otp);
+
+        if (valid !== "OK") {
+            return res.status(400).json({ error: valid });
+        }
+        
+        const hashed = await bcrypt.hash(newPassword, 10);
+        await pool.query(
+            `UPDATE subscribers SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL WHERE email = $2`,
+            [hashed, email]
+        );
+
+        return res.status(200).json({ message: 'Password cambiata con successo' });
+    } catch (err) {
+        console.error('ERR NEW CNG PSW', email, ':', err);
+        return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
+    }
 });
 
 // Middleware to verify token

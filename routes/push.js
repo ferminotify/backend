@@ -36,9 +36,7 @@ router.get("/health", (_req, res) => {
 // POST /subscribe → register or update a subscription
 router.post("/subscribe", (req, res) => {
   const subscription = req.body;
-  if (!subscription || !subscription.endpoint) {
-    return res.status(400).json({ ok: false, error: "Invalid subscription payload" });
-  }
+  if (!subscription || !subscription.endpoint) return res.status(400).json({ ok: false, error: "Invalid subscription payload" });
   const updated = subscriptions.has(subscription.endpoint);
   subscriptions.set(subscription.endpoint, subscription);
   console.log(`[push] ${updated ? "Updated" : "Stored"} subscription:`, subscription.endpoint);
