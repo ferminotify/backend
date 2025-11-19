@@ -15,6 +15,8 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use('/user/auth', authRouter);
 
+app.use('/user/push', pushRouter);
+
 app.use('/user', authenticateToken, userRouter);
 
 app.get('/', (req, res) => {

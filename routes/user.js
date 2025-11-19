@@ -4,7 +4,6 @@ import dotenv from 'dotenv';
 import keywordRouter from './keyword.js';
 import preferencesRouter from './preferences.js';
 import TelegramRouter from './telegram.js';
-import pushRouter from './push.js';
 dotenv.config();
 
 const router = express.Router();
@@ -39,8 +38,6 @@ router.use('/keyword', keywordRouter);
 router.use("/preferences", preferencesRouter);
 
 router.use("/telegram", TelegramRouter);
-
-router.use('/push', pushRouter);
 
 router.post('/edit', async (req, res) => {
     const userId = req.user.id;

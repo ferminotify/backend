@@ -22,7 +22,6 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 const subscriptions = new Map(); // key: endpoint -> subscription
 
 // GET /public-key → expose VAPID public key for client subscription
-// TODO requires authentication?
 router.get("/public-key", (_req, res) => {
   res.json({ key: VAPID_PUBLIC_KEY });
 });
