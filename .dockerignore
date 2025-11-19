@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env files
+.env
+.env.*
+
+# VCS
+.git
+.gitignore
+.gitattributes
+.github/
+
+# Docker
+Dockerfile*
+.dockerignore
+
+# Build artifacts / tests / docs
+coverage
+logs
+*.log
+*.md
+deploy/

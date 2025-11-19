@@ -1,0 +1,21 @@
+# Production compose for Fermi Notify Backend
+# Usage on server:
+#   - Place this file in $DEPLOY_PATH (e.g., /opt/fermi-backend)
+#   - Create an .env file alongside it with all required variables
+#   - Run: docker compose pull && docker compose up -d
+
+services:
+  backend:
+    image: ghcr.io/ferminotify/backend:latest
+    container_name: fermi-backend
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+# Optional: declare a named network if you want to attach to reverse proxies like Traefik/Caddy
+# networks:
+#   default:
+#     name: fermi-net
+#     external: true
