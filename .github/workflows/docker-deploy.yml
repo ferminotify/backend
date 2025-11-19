@@ -49,6 +49,7 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     if: ${{ github.ref == 'refs/heads/master' }}
+    environment: 'Server SSH'
     steps:
       - name: Ensure deploy directory exists
         uses: appleboy/ssh-action@v1.2.0
