@@ -17,4 +17,8 @@ app.use('/user/auth', authRouter);
 
 app.use('/user', authenticateToken, userRouter);
 
+app.get('/', (req, res) => {
+  res.send('Fermi Notify Backend is running.');
+});
+
 app.listen(3001, () => console.log('Server running on port 3001'));

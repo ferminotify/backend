@@ -2,6 +2,8 @@ import express from "express";
 import webpush from "web-push";
 import dotenv from "dotenv";
 dotenv.config();
+import pool from '../db.js';
+import { authenticateToken } from "./auth.js";
 
 const router = express.Router();
 
@@ -34,11 +36,41 @@ router.get("/health", (_req, res) => {
 });
 
 // POST /subscribe → register or update a subscription
-router.post("/subscribe", (req, res) => {
+router.post("/subscribe", authenticateToken, (req, res) => {
   const subscription = req.body;
+  const userId = req.user.id;
   if (!subscription || !subscription.endpoint) return res.status(400).json({ ok: false, error: "Invalid subscription payload" });
   const updated = subscriptions.has(subscription.endpoint);
   subscriptions.set(subscription.endpoint, subscription);
+
+  try {
+    const storeSubscription = async () => {
+      const subPayload = JSON.stringify(subscription);
+      /*
+      CREATE TABLE push (
+        id SERIAL PRIMARY KEY,
+        sub_id INTEGER NOT NULL,
+        vapid_key TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        CONSTRAINT fk_user_id
+            FOREIGN KEY (sub_id)
+            REFERENCES subscribers (id)
+            ON DELETE CASCADE
+      );
+      */
+      await pool.query(
+        `INSERT INTO push (sub_id, vapid_key) VALUES ($1, $2)`,
+        [userId, subPayload]
+      );
+
+      await storeSubscription();
+    };
+  } catch (err) {
+    console.error('DB error storing subscription for user', userId, err);
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+
   console.log(`[push] ${updated ? "Updated" : "Stored"} subscription:`, subscription.endpoint);
   res.status(201).json({ ok: true, updated });
 });
@@ -60,20 +92,37 @@ router.post("/notify", async (req, res) => {
 
   let sent = 0;
   let removed = 0;
-  for (const [endpoint, sub] of subscriptions.entries()) {
-    try {
-      await webpush.sendNotification(sub, payload);
-      sent += 1;
-    } catch (err) {
-      const status = err?.statusCode;
-      if (status === 404 || status === 410) {
-        subscriptions.delete(endpoint);
-        removed += 1;
-        console.warn(`[push] Removed stale subscription (${status}):`, endpoint);
-      } else {
-        console.error("[push] Send failed:", status || err.message || err);
+
+  try{
+    const subs = await pool.query(`SELECT vapid_key FROM push`);
+    for(const row of subs.rows){
+      const sub = JSON.parse(row.vapid_key);
+      try{
+        await webpush.sendNotification(sub, payload);
+        sent += 1;
+      }catch(err){
+        const status = err?.statusCode;
+        if (status === 404 || status === 410) {
+          removed += 1;
+          console.warn(`[push] Removed stale subscription (${status}):`, sub.endpoint);
+
+          try{
+            await pool.query(
+              `DELETE FROM push WHERE vapid_key->>'endpoint' = $1`,
+              [sub.endpoint]
+            );
+          }catch(dbErr){
+            console.error("DB error removing stale subscription:", dbErr);
+          }
+
+        } else {
+          console.error("[push] Send failed:", status || err.message || err);
+        }
       }
     }
+  }catch(err){
+    console.error("Error sending notifications:", err);
+    return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
   }
 
   res.json({ ok: true, sent, removed, total: subscriptions.size });
