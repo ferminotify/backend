@@ -8,6 +8,7 @@ const router = express.Router();
 // Environment VAPID keys (expected to be URL-safe Base64, but we trust input)
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const NOTIFICATION_API_KEY = process.env.NOTIFICATION_API_KEY || "";
 
 if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
   console.warn("[push] Missing VAPID keys. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.");
@@ -46,14 +47,16 @@ router.post("/subscribe", (req, res) => {
 
 // POST /notify → broadcast a notification to all stored subscriptions
 router.post("/notify", async (req, res) => {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-    return res.status(503).json({ ok: false, error: "VAPID keys not configured" });
-  }
+
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || authHeader !== `Bearer ${NOTIFICATION_API_KEY}`) return res.status(401).json({ ok: false, error: "Unauthorized" });
+
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ ok: false, error: "VAPID keys not configured" });
 
   const { title, body, url } = req.body || {};
   const payload = JSON.stringify({
-    title: title || "Notification",
-    body: body || "Test push notification.",
+    title: title || "Fermi Notify",
+    body: body || "Hai ricevuto una notifica.",
     url: url || "/",
   });
 
