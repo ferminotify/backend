@@ -98,37 +98,35 @@ router.post("/notify", async (req, res) => {
   });
 
   let sent = 0;
-  let removed = 0;
+  let removed = 0; // deleted due to 404/410/403 (stale or key mismatch)
 
   try {
 
-    const subs = await pool.query(`SELECT endpoint, p256dh, auth FROM push`);
+  const subs = await pool.query(`SELECT endpoint, p256dh, auth FROM push`);
 
     for (const row of subs.rows) {
       const sub = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
-      
+
       try {
         await webpush.sendNotification(sub, payload);
         sent += 1;
       } catch (err) {
-
         const status = err?.statusCode;
 
-        if (status === 404 || status === 410) {
-          
+        // 404/410 = subscription gone. 403 = VAPID auth mismatch (e.g. keys rotated after subscription was created).
+        if (status === 404 || status === 410 || status === 403) {
           try {
             await pool.query(`DELETE FROM push WHERE endpoint = $1`, [sub.endpoint]);
             removed += 1;
-            console.warn(`[push] Removed stale subscription (${status}):`, sub.endpoint);
+            console.warn(`[push] Removed subscription (${status === 403 ? 'key mismatch / re-subscribe needed' : 'stale'}) status=${status}:`, sub.endpoint);
           } catch (dbErr) {
-            console.error('[push] DB error removing stale subscription:', dbErr);
+            console.error('[push] DB error removing problematic subscription:', dbErr);
           }
-
+          // continue loop – do NOT abort broadcast
         } else {
-          console.error('[push] Send failed: [', status, "]", err);
+          console.error('[push] Send failed (non-removable error): [', status, '] endpoint=', sub.endpoint, err);
           return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
         }
-
       }
     }
   } catch (err) {
@@ -136,7 +134,16 @@ router.post("/notify", async (req, res) => {
     return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
   }
 
-  res.json({ ok: true, sent, removed, total: subscriptions.size });
+  // total = count currently in DB after removals, not in-memory map size
+  let total = sent + removed; // fallback
+  try {
+    const countRes = await pool.query('SELECT count(*)::int AS c FROM push');
+    total = countRes.rows[0]?.c ?? total;
+  } catch (countErr) {
+    console.warn('[push] Could not fetch total count after notify:', countErr.message);
+  }
+
+  res.json({ ok: true, sent, removed, total });
 });
 
 export default router;
