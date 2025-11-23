@@ -101,56 +101,40 @@ router.post("/notify", async (req, res) => {
   let removed = 0;
 
   try {
+
     const subs = await pool.query(`SELECT endpoint, p256dh, auth FROM push`);
+
     for (const row of subs.rows) {
       const sub = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
+      
       try {
         await webpush.sendNotification(sub, payload);
         sent += 1;
       } catch (err) {
+
         const status = err?.statusCode;
+
         if (status === 404 || status === 410) {
-          removed += 1;
-          console.warn(`[push] Removed stale subscription (${status}):`, sub.endpoint);
+          
           try {
             await pool.query(`DELETE FROM push WHERE endpoint = $1`, [sub.endpoint]);
+            removed += 1;
+            console.warn(`[push] Removed stale subscription (${status}):`, sub.endpoint);
           } catch (dbErr) {
             console.error('[push] DB error removing stale subscription:', dbErr);
           }
+
         } else {
-          console.error('[push] Send failed:', status || err.message || err);
+          console.error('[push] Send failed: [', status, "]", err);
+          return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
         }
+
       }
     }
   } catch (err) {
     console.error('Error sending notifications:', err);
     return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
   }
-
-  /*
-  for (const [endpoint, sub] of subscriptions.entries()) {
-    try {
-      await webpush.sendNotification(sub, payload);
-      sent += 1;
-    } catch (err) {
-      const status = err?.statusCode;
-      if (status === 404 || status === 410) {
-        subscriptions.delete(endpoint);
-        removed += 1;
-        console.warn(`[push] Removed stale subscription (${status}):`, endpoint);
-
-        try{
-          await pool.query(
-            `DELETE FROM push WHERE vapid_key->>'endpoint' = $1`,
-            [endpoint]
-          );
-        }
-
-      } else {
-        console.error("[push] Send failed:", status || err.message || err);
-      }
-    }
-  }*/
 
   res.json({ ok: true, sent, removed, total: subscriptions.size });
 });
