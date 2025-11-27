@@ -39,17 +39,35 @@ router.get("/health", (_req, res) => {
 /*
 CREATE TABLE push (
   id SERIAL PRIMARY KEY,
+  
+  -- Utente che possiede il dispositivo
   sub_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+
+  -- Identificatore stabile del dispositivo, salvato in localStorage
+  device_id TEXT NOT NULL,
+
+  -- User Agent del browser per mostrare un nome riconoscibile
+  user_agent TEXT NOT NULL,
+
+  -- Subscription Web Push (cambia quando il browser la rinnova)
   endpoint TEXT NOT NULL UNIQUE,
   p256dh TEXT NOT NULL,
   auth TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+
+  -- Timestamp creazione
+  created_at TIMESTAMPTZ DEFAULT now(),
+
+  send_push_with_notifications BOOLEAN DEFAULT FALSE,
+
+  -- Impedisce che lo stesso browser (device_id) venga registrato due volte
+  UNIQUE (sub_id, device_id)
 );
+
 */
 // Request body expected: { endpoint: string, keys: { p256dh: string, auth: string } }
 // We upsert on (endpoint) so re-subscribe updates keys/user association without duplicates.
 router.post("/subscribe", authenticateToken, async (req, res) => {
-  const { endpoint, keys } = req.body || {};
+  const { endpoint, keys, device_id, user_agent } = req.body || {};
   const userId = req.user.id;
   const p256dh = keys?.p256dh;
   const auth = keys?.auth;
@@ -63,24 +81,32 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
   console.log(`[push] ${updated ? 'Updated' : 'Stored'} subscription in memory:`, endpoint);
 
   try {
-    // Upsert normalized row
-    await pool.query(
-      `INSERT INTO push (sub_id, endpoint, p256dh, auth)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (endpoint)
-       DO UPDATE SET sub_id = EXCLUDED.sub_id,
-                     p256dh = EXCLUDED.p256dh,
-                     auth   = EXCLUDED.auth`,
-      [userId, endpoint, p256dh, auth]
-    );
-    console.log(`[push] Stored subscription in DB for user ${userId}:`, endpoint);
-  } catch (err) {
-    console.error('[push] DB upsert failed for user', userId, err);
-    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
-  }
+        const upd = await pool.query(
+          `INSERT INTO push (sub_id, endpoint, p256dh, auth, device_id, user_agent)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (endpoint)
+          DO UPDATE SET 
+              sub_id = EXCLUDED.sub_id,
+              p256dh = EXCLUDED.p256dh,
+              auth = EXCLUDED.auth,
+              device_id = EXCLUDED.device_id,
+              user_agent = EXCLUDED.user_agent
+          WHERE push.sub_id != EXCLUDED.sub_id
+            OR push.p256dh != EXCLUDED.p256dh
+            OR push.auth != EXCLUDED.auth
+            OR push.device_id != EXCLUDED.device_id
+            OR push.user_agent != EXCLUDED.user_agent`,
+          [userId, endpoint, p256dh, auth, device_id, user_agent]
+        );
 
-  res.status(201).json({ ok: true, updated });
-});
+        console.log(`[push] Stored subscription in DB for user ${userId}:`, endpoint);
+      } catch (err) {
+        console.error('[push] DB upsert failed for user', userId, err);
+        return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+      }
+
+      res.status(201).json({ ok: true, updated });
+    });
 
 // POST /notify → broadcast a notification to all stored subscriptions
 router.post("/notify", async (req, res) => {
@@ -113,7 +139,7 @@ router.post("/notify", async (req, res) => {
       } catch (err) {
         const status = err?.statusCode;
 
-        // 404/410 = subscription gone. 403 = VAPID auth mismatch (e.g. keys rotated after subscription was created).
+        // 404/410 = subscription gone. 403 = VAPID auth mismatch.
         if (status === 404 || status === 410 || status === 403) {
           try {
             await pool.query(`DELETE FROM push WHERE endpoint = $1`, [sub.endpoint]);
@@ -144,6 +170,99 @@ router.post("/notify", async (req, res) => {
   }
 
   res.json({ ok: true, sent, removed, total });
+});
+
+router.post("/unsubscribe", authenticateToken, async (req, res) => {
+  const { endpoint } = req.body || {};
+  const userId = req.user.id;
+  if (!endpoint) {
+    return res.status(400).json({ ok: false, error: "Invalid unsubscribe payload" });
+  }
+
+  // Remove from in-memory map
+  const existed = subscriptions.delete(endpoint);
+  if (existed) {
+    console.log('[push] Removed subscription from memory:', endpoint);
+  }
+
+  try {
+    const result = await pool.query(`DELETE FROM push WHERE endpoint = $1 AND sub_id = $2`, [endpoint, userId]);
+    if (result.rowCount > 0) {
+      console.log(`[push] Unsubscribed user ${userId} from endpoint:`, endpoint);
+      return res.json({ ok: true, unsubscribed: true });
+    } else {
+      return res.status(404).json({ ok: false, error: "Subscription not found for user." });
+    }
+  } catch (err) {
+    console.error('[push] DB error during unsubscribe for user', userId, err);
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+});
+
+/*
+PUSH NOTIFICATION TIME:
+send_push_with_notifications = Boolean
+*/
+router.post("/send-push-with-notifications", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { send_push_with_notifications, device_id } = req.body;
+
+  if (typeof send_push_with_notifications !== 'boolean') return res.status(400).json({ ok: false, error: "Invalid payload" });
+
+  if (!device_id) return res.status(400).json({ ok: false, error: "Missing device_id" });
+
+  try {
+    const result = await pool.query(
+      `UPDATE push
+       SET send_push_with_notifications = $1
+       WHERE sub_id = $2 AND device_id = $3`,
+      [send_push_with_notifications, userId, device_id]
+    );
+
+    return res.json({ ok: true, updated: result.rowCount > 0 });
+  } catch (err) {
+    console.error('[push] DB error updating send_push_with_notifications for user', userId, err);
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+});
+
+/* GET USER PUSH DEVICES */
+router.get("/devices", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const result = await pool.query(
+      `SELECT device_id, user_agent, created_at, send_push_with_notifications
+       FROM push
+       WHERE sub_id = $1`,
+      [userId]
+    );
+
+    return res.json({ ok: true, devices: result.rows });
+  } catch (err) {
+    console.error('[push] DB error fetching devices for user', userId, err);
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+});
+
+/* DELETE USER PUSH DEVICE */
+// TODO forse non funziona senza unsubscribe lato client?
+router.delete("/devices/:device_id", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const deviceId = req.params.device_id;
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM push
+       WHERE sub_id = $1 AND device_id = $2`,
+      [userId, deviceId]
+    );
+
+    return res.json({ ok: true, deleted: result.rowCount > 0 });
+  } catch (err) {
+    console.error('[push] DB error deleting device for user', userId, err);
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
 });
 
 export default router;

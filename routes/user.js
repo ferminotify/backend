@@ -9,26 +9,53 @@ dotenv.config();
 const router = express.Router();
 
 router.get('/profile', async (req, res) => {
+    if (!req.user?.id) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     const id = req.user.id;
+
     try {
-        const user = await pool.query(`
+        const result = await pool.query(`
             SELECT
-            name,
-            surname,
-            email,
-            gender,
-            tags AS keywords,
-            telegram,
-            notifications,
-            notification_preferences,
-            include_similar_tags,
-            notification_day_before,
-            notification_time
-            FROM subscribers WHERE id = $1`, [id]);
-        res.json(user.rows[0]);
+                s.name,
+                s.surname,
+                s.email,
+                s.gender,
+                s.tags AS keywords,
+                s.telegram,
+                s.notifications,
+                s.notification_preferences,
+                s.include_similar_tags,
+                s.notification_day_before,
+                s.notification_time,
+                COALESCE(
+                    json_agg(
+                        json_build_object(
+                            'endpoint', p.endpoint,
+                            'p256dh', p.p256dh,
+                            'auth', p.auth,
+                            'device_id', p.device_id,
+                            'user_agent', p.user_agent
+                        )
+                    ) FILTER (WHERE p.endpoint IS NOT NULL),
+                    'null'
+                ) AS push_subscription
+            FROM subscribers s
+            LEFT JOIN push p ON p.sub_id = s.id
+            WHERE s.id = $1
+            GROUP BY s.id
+        `, [id]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        return res.json(result.rows[0]);
+
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Internal error' });
+        console.error('Profile fetch error:', err);
+        return res.status(500).json({ error: 'Internal server error' });
     }
 });
 
