@@ -224,7 +224,8 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.post('/refresh_token', authenticateToken, async (req, res) => {
+// Refresh access token using a valid refresh token.
+router.post('/refresh_token', async (req, res) => {
     const { refreshToken } = req.body;
     try {
         const result = await pool.query(
@@ -249,10 +250,10 @@ router.post('/refresh_token', authenticateToken, async (req, res) => {
             [newExpiresAt, refreshToken]
         );
 
-        res.json({ token: newAccessToken });
+        return res.status(200).json({ token: newAccessToken });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Internal error' });
+        return res.status(500).json({ error: 'Internal error' });
     }
 });
 
