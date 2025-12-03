@@ -265,4 +265,27 @@ router.delete("/devices/:device_id", authenticateToken, async (req, res) => {
   }
 });
 
+router.post("/update-device-info", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const { device_id, device_info } = req.body;
+
+  if (!device_id || !device_info) {
+    return res.status(400).json({ ok: false, error: "Invalid payload" });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE push
+       SET device_info = $1
+       WHERE sub_id = $2 AND device_id = $3`,
+      [device_info, userId, device_id]
+    );
+
+    return res.json({ ok: true, updated: result.rowCount > 0 });
+  } catch (err) {
+    console.error('[push] DB error updating device_info for user', userId, err);
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+});
+
 export default router;
