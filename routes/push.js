@@ -108,8 +108,49 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
       res.status(201).json({ ok: true, updated });
     });
 
-// POST /notify → broadcast a notification to all stored subscriptions
 router.post("/notify", async (req, res) => {
+  const { title, body, url, endpoint } = req.body || {};
+  if (!endpoint) {
+    return res.status(400).json({ ok: false, error: "Missing endpoint in payload" });
+  }
+
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ ok: false, error: "VAPID keys not configured" });
+
+  const payload = JSON.stringify({
+    title: title || "Fermi Notify",
+    body: body || "Hai ricevuto una notifica.",
+    url: url || "/",
+  });
+
+  let sub = subscriptions.get(endpoint);
+  if (!sub) {
+    // no sub in memory, try DB
+    try {
+      const result = await pool.query(`SELECT endpoint, p256dh, auth FROM push WHERE endpoint = $1`, [endpoint]);
+      if (result.rowCount === 0) {
+        return res.status(404).json({ ok: false, error: "Subscription not found" });
+      }
+      const row = result.rows[0];
+      sub = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
+      // cache in memory for future
+      subscriptions.set(endpoint, sub);
+      console.log('[push] Loaded subscription from DB into memory:', endpoint);
+    } catch (err) {
+      console.error('[push] DB error fetching subscription for notify:', err);
+      return res.status(500).json({ ok: false, error: "No subscription found / DB error occurred." });
+    }
+  }
+
+  try {
+    await webpush.sendNotification(sub, payload);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[push] Send notification failed:', err);
+    res.status(500).json({ ok: false, error: "Errore interno durante l'invio della notifica." });
+  }
+});
+
+router.post("/notify/broadcast", async (req, res) => {
 
   const authHeader = req.headers['authorization'];
   if (!authHeader || authHeader !== `Bearer ${NOTIFICATION_API_KEY}`) return res.status(401).json({ ok: false, error: "Unauthorized" });
