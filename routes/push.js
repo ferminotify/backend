@@ -46,8 +46,8 @@ CREATE TABLE push (
   -- Identificatore stabile del dispositivo, salvato in localStorage
   device_id TEXT NOT NULL,
 
-  -- User Agent del browser per mostrare un nome riconoscibile
-  user_agent TEXT NOT NULL,
+  -- Device info (UA parsed)
+  device_info TEXT NOT NULL,
 
   -- Subscription Web Push (cambia quando il browser la rinnova)
   endpoint TEXT NOT NULL UNIQUE,
@@ -67,7 +67,7 @@ CREATE TABLE push (
 // Request body expected: { endpoint: string, keys: { p256dh: string, auth: string } }
 // We upsert on (endpoint) so re-subscribe updates keys/user association without duplicates.
 router.post("/subscribe", authenticateToken, async (req, res) => {
-  const { endpoint, keys, device_id, user_agent } = req.body || {};
+  const { endpoint, keys, device_id, device_info } = req.body || {};
   const userId = req.user.id;
   const p256dh = keys?.p256dh;
   const auth = keys?.auth;
@@ -82,7 +82,7 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
 
   try {
         const upd = await pool.query(
-          `INSERT INTO push (sub_id, endpoint, p256dh, auth, device_id, user_agent)
+          `INSERT INTO push (sub_id, endpoint, p256dh, auth, device_id, device_info)
           VALUES ($1, $2, $3, $4, $5, $6)
           ON CONFLICT (endpoint)
           DO UPDATE SET 
@@ -90,13 +90,13 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
               p256dh = EXCLUDED.p256dh,
               auth = EXCLUDED.auth,
               device_id = EXCLUDED.device_id,
-              user_agent = EXCLUDED.user_agent
+              device_info = EXCLUDED.device_info
           WHERE push.sub_id != EXCLUDED.sub_id
             OR push.p256dh != EXCLUDED.p256dh
             OR push.auth != EXCLUDED.auth
             OR push.device_id != EXCLUDED.device_id
-            OR push.user_agent != EXCLUDED.user_agent`,
-          [userId, endpoint, p256dh, auth, device_id, user_agent]
+            OR push.device_info != EXCLUDED.device_info`,
+          [userId, endpoint, p256dh, auth, device_id, device_info]
         );
 
         console.log(`[push] Stored subscription in DB for user ${userId}:`, endpoint);
@@ -232,7 +232,7 @@ router.get("/devices", authenticateToken, async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT device_id, user_agent, created_at, send_push_with_notifications
+      `SELECT device_id, device_info, created_at, send_push_with_notifications
        FROM push
        WHERE sub_id = $1`,
       [userId]

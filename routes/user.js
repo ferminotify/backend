@@ -36,7 +36,7 @@ router.get('/profile', async (req, res) => {
                             'p256dh', p.p256dh,
                             'auth', p.auth,
                             'device_id', p.device_id,
-                            'user_agent', p.user_agent
+                            'device_info', p.device_info
                         )
                     ) FILTER (WHERE p.endpoint IS NOT NULL),
                     'null'
