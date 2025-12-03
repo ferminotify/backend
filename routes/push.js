@@ -21,6 +21,27 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
 // In-memory subscription store (replace with persistent DB later)
 const subscriptions = new Map(); // key: endpoint -> subscription
 
+// Helper: build notification payload
+function buildPayload(title, body, url) {
+  return JSON.stringify({
+    title: title || "Fermi Notify",
+    body: body || "Hai ricevuto una notifica.",
+    url: url || "/",
+  });
+}
+
+// Helper: remove subscription from DB and memory
+async function removeSubscription(endpoint, reason = '') {
+  try {
+    await pool.query(`DELETE FROM push WHERE endpoint = $1`, [endpoint]);
+  } catch (dbErr) {
+    console.error('[push] DB error removing subscription:', endpoint, dbErr);
+  }
+  if (subscriptions.delete(endpoint)) {
+    console.log('[push] Removed subscription from memory:', endpoint, reason);
+  }
+}
+
 // GET /public-key → expose VAPID public key for client subscription
 router.get("/public-key", (_req, res) => {
   res.json({ key: VAPID_PUBLIC_KEY });
@@ -116,11 +137,7 @@ router.post("/notify", async (req, res) => {
 
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ ok: false, error: "VAPID keys not configured" });
 
-  const payload = JSON.stringify({
-    title: title || "Fermi Notify",
-    body: body || "Hai ricevuto una notifica.",
-    url: url || "/",
-  });
+  const payload = buildPayload(title, body, url);
 
   let sub = subscriptions.get(endpoint);
   if (!sub) {
@@ -143,10 +160,18 @@ router.post("/notify", async (req, res) => {
 
   try {
     await webpush.sendNotification(sub, payload);
-    res.json({ ok: true });
+    return res.json({ ok: true });
   } catch (err) {
-    console.error('[push] Send notification failed:', err);
-    res.status(500).json({ ok: false, error: "Errore interno durante l'invio della notifica." });
+    const status = err?.statusCode;
+    console.error('[push] Send notification failed:', status, err);
+
+    // If subscription is gone or keys mismatch, remove from DB and memory so future sends don't fail
+    if (status === 404 || status === 410 || status === 403) {
+      await removeSubscription(endpoint, status === 403 ? 'key mismatch' : 'stale');
+      return res.status(410).json({ ok: false, error: "Subscription removed (stale or key mismatch)." });
+    }
+
+    return res.status(500).json({ ok: false, error: "Errore interno durante l'invio della notifica." });
   }
 });
 
@@ -158,42 +183,31 @@ router.post("/notify/broadcast", async (req, res) => {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ ok: false, error: "VAPID keys not configured" });
 
   const { title, body, url } = req.body || {};
-  const payload = JSON.stringify({
-    title: title || "Fermi Notify",
-    body: body || "Hai ricevuto una notifica.",
-    url: url || "/",
-  });
+  const payload = buildPayload(title, body, url);
 
   let sent = 0;
   let removed = 0; // deleted due to 404/410/403 (stale or key mismatch)
 
   try {
-
-  const subs = await pool.query(`SELECT endpoint, p256dh, auth FROM push`);
+    const subs = await pool.query(`SELECT endpoint, p256dh, auth FROM push`);
 
     for (const row of subs.rows) {
       const sub = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
-
       try {
         await webpush.sendNotification(sub, payload);
         sent += 1;
       } catch (err) {
         const status = err?.statusCode;
-
         // 404/410 = subscription gone. 403 = VAPID auth mismatch.
         if (status === 404 || status === 410 || status === 403) {
-          try {
-            await pool.query(`DELETE FROM push WHERE endpoint = $1`, [sub.endpoint]);
-            removed += 1;
-            console.warn(`[push] Removed subscription (${status === 403 ? 'key mismatch / re-subscribe needed' : 'stale'}) status=${status}:`, sub.endpoint);
-          } catch (dbErr) {
-            console.error('[push] DB error removing problematic subscription:', dbErr);
-          }
-          // continue loop – do NOT abort broadcast
-        } else {
-          console.error('[push] Send failed (non-removable error): [', status, '] endpoint=', sub.endpoint, err);
-          return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
+          // remove stale subscription (DB + memory)
+          await removeSubscription(sub.endpoint, status === 403 ? 'key mismatch' : 'stale');
+          removed += 1;
+          continue; // continue loop – do NOT abort broadcast
         }
+
+        console.error('[push] Send failed (non-removable error): [', status, '] endpoint=', sub.endpoint, err);
+        return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
       }
     }
   } catch (err) {
