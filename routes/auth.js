@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import dotenv from 'dotenv';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
-import { sendMail, sendMailAsync } from '../utils/email.js';
+import { sendMailAsync } from '../utils/email.js';
 import { URL } from '../utils/config.js';
 import {
     getUserEmailWithTelegramID,
@@ -19,6 +19,7 @@ import {
     verifyUserOTP
 } from '../utils/utils.js';
 import crypto from 'crypto';
+import { generateRefreshToken } from '../utils/auth.js';
 dotenv.config();
 
 const router = express.Router();
@@ -194,16 +195,18 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
 
+    // generate JWT token of 1 min
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
       expiresIn: '1h',
     });
 
-    let refreshToken = crypto.randomBytes(64).toString('hex');
-    const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
-    await pool.query(
-        'INSERT INTO refresh_tokens (sub_id, token, expires_at) VALUES ($1, $2, $3)',
-        [user.id, refreshToken, expiresAt]
-    );
+    let refreshToken;
+    try{
+        refreshToken = await generateRefreshToken(user.id, 365 * 24 * 60 * 60 * 1000); // 1 year
+    }catch(e){
+        console.error('Failed to generate refresh token for user', user.id, e);
+        return res.status(500).json({ error: 'Internal error' });
+    }
 
     try {
         await pool.query(
@@ -215,7 +218,13 @@ router.post('/login', async (req, res) => {
     }
 
     // TEMP use flag onboarding for all users, then use flag notification == -1 for first login TODO
-    res.json({ token, refreshToken, onboarding: !user.onboarding });
+    res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: "lax",
+        maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
+    });
+    res.json({ token, onboarding: !user.onboarding });
     // update onboarding set to true after first login
     await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [user.id]);
   } catch (err) {
@@ -226,7 +235,11 @@ router.post('/login', async (req, res) => {
 
 // Refresh access token using a valid refresh token.
 router.post('/refresh_token', async (req, res) => {
-    const { refreshToken } = req.body;
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken)
+        return res.status(401).json({ error: 'No refresh token provided' });
+
     try {
         const result = await pool.query(
             'SELECT * FROM refresh_tokens WHERE token = $1 AND expires_at > NOW()',
@@ -236,19 +249,35 @@ router.post('/refresh_token', async (req, res) => {
             return res.status(401).json({ error: 'Invalid or expired refresh token' });
 
         const tokenData = result.rows[0];
-        const userResult = await pool.query('SELECT * FROM subscribers WHERE id = $1', [tokenData.sub_id]);
-        const user = userResult.rows[0];
+        const userResult = await pool.query('SELECT email FROM subscribers WHERE id = $1', [tokenData.sub_id]);
+        const user_email = userResult.rows[0].email;
+        const user = { id: tokenData.sub_id, email: user_email };
 
         const newAccessToken = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
             expiresIn: '1h',
         });
 
-        const newExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
+        // rotation: generate a new token and update the existing DB row
+        let newRefreshToken;
+        try {
+            newRefreshToken = crypto.randomBytes(64).toString('hex');
+        } catch (e) {
+            console.error('Failed to generate new refresh token for user', user.id, e);
+            return res.status(500).json({ error: 'Internal error' });
+        }
 
         await pool.query(
-            'UPDATE refresh_tokens SET expires_at = $1 WHERE token = $2',
-            [newExpiresAt, refreshToken]
+            "UPDATE refresh_tokens SET token = $1, expires_at = NOW() + INTERVAL '365 days' WHERE id = $2",
+            [newRefreshToken, tokenData.id]
         );
+
+        // Set the new refresh token cookie (HttpOnly)
+        res.cookie('refreshToken', newRefreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 365 * 24 * 60 * 60 * 1000,
+        });
 
         return res.status(200).json({ token: newAccessToken });
     } catch (err) {
