@@ -1,4 +1,6 @@
 import pool from '../db.js';
+import logger from './logger.js';
+const log = logger.child('utils');
 
 async function getUserEmailWithTelegramID(telegramId) {
   try {
@@ -9,7 +11,7 @@ async function getUserEmailWithTelegramID(telegramId) {
     );
     return RES.rows[0].email;
   } catch (err) {
-    console.error("ERR GET EMAIL WITH TG ID " + telegramId + ": " + err.stack);
+    log.error('ERR GET EMAIL WITH TG ID', { telegramId, error: err.stack || err });
   }
 }
 
@@ -22,7 +24,7 @@ async function getNumberNotification(email){
     );
     return RES.rows[0].notifications;
   } catch (err) {
-    console.error("ERR GET NUMBER NOTIFICATIONS " + email + ": " + err.stack);
+    log.error('ERR GET NUMBER NOTIFICATIONS', { email, error: err.stack || err });
   }
 }
 
@@ -35,7 +37,7 @@ async function getGenderByEmail(email){
     );
     return RES.rows[0].gender;
   } catch (err) {
-    console.error("ERR GET USER GENDER BY EMAIL " + email + ": " + err.stack);
+    log.error('ERR GET USER GENDER BY EMAIL', { email, error: err.stack || err });
   }
 }
 
@@ -48,7 +50,7 @@ async function getFirstNameByEmail(email){
     );
     return RES.rows[0].name;
   } catch (err) {
-    console.error("ERR GET USER NAME BY EMAIL " + email + ": " + err.stack);
+    log.error('ERR GET USER NAME BY EMAIL', { email, error: err.stack || err });
   }
 }
 
@@ -61,6 +63,7 @@ async function getUnsubscribeInfoByEmail(email){
     )
     return RES.rows[0];
   } catch (err) {
+    log.error('ERR GET UNSUBSCRIBE INFO BY EMAIL', { email, error: err && err.stack ? err.stack : err });
     return null;
   }
 }
@@ -73,10 +76,10 @@ async function incrementNumberNotification(telegramId){
        WHERE telegram = $1 AND notifications = -1`,
       [telegramId]
     );
-    console.log("SUCCESS CONFIRMATION TG ID: " + telegramId);
+    log.info('SUCCESS CONFIRMATION TG ID', { telegramId });
     return RES;
   } catch (err) {
-    console.error("ERR ADD NOTIFICATIONS " + telegramId + ": " + err.stack);
+    log.error('ERR ADD NOTIFICATIONS', { telegramId, error: err.stack || err });
   }
 }
 
@@ -89,7 +92,7 @@ async function userExistsByEmail(email){
     );
     return res.rows[0];
   } catch (err) {
-    console.error("ERR USER EXISTS BY EMAIL " + email + ": " + err.stack);
+    log.error('ERR USER EXISTS BY EMAIL', { email, error: err.stack || err });
   }
 }
 
@@ -116,7 +119,7 @@ async function verifyUserOTP(email, otp) {
 
     return "OK";
   } catch (err) {
-    console.error("ERR VERIFY USER OTP " + email + ": " + err.stack);
+    log.error('ERR VERIFY USER OTP', { email, error: err.stack || err });
     return "Errore durante la verifica dell'OTP";
   }
 }

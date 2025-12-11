@@ -5,6 +5,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import dotenv from 'dotenv';
+import logger from '../utils/logger.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendMailAsync } from '../utils/email.js';
 import { URL } from '../utils/config.js';
@@ -23,10 +24,13 @@ import { generateRefreshToken } from '../utils/auth.js';
 dotenv.config();
 
 const router = express.Router();
+const log = logger.child('auth');
 
 /* REGISTER */
 router.put('/register', async (req, res) => {
     let { name, surname, email, password, password2, gender } = req.body;
+
+    log.info('PUT /register called', { email: email?.toLowerCase(), ip: req.ip });
 
     try {
         // Validation
@@ -47,7 +51,7 @@ router.put('/register', async (req, res) => {
         if (!emailRegex.test(email)) return res.status(400).json({ error: 'Email non valida!' });
 
     } catch (err) {
-        console.error(err);
+        log.error('Validation error during register', { error: err.stack || err });
         return res.status(500).json({ error: 'Errore interno!' });
     }
     // If email already exists: if confirmed (notifications > -1) => error, else resend confirmation email and return 200
@@ -90,15 +94,15 @@ router.put('/register', async (req, res) => {
                 await client.query('COMMIT');
                 client.release();
             } catch (mailOrUpdateErr) {
-                console.error('Failed to update/resend confirmation for unconfirmed user:', mailOrUpdateErr);
-                try { await client.query('ROLLBACK'); } catch (e) { console.error('Rollback failed:', e); }
+                log.error('Failed to update/resend confirmation for unconfirmed user', { error: mailOrUpdateErr.stack || mailOrUpdateErr });
+                try { await client.query('ROLLBACK'); } catch (e) { log.error('Rollback failed during resend flow', { error: e.stack || e }); }
                 try { client.release(); } catch {}
                 return res.status(500).json({ error: 'Errore interno!' });
             }
             return res.status(200).json({ message: "Ti abbiamo reinviato l'email di conferma! (controlla anche lo SPAM)" });
         }
     } catch (preCheckErr) {
-        console.error('Pre-check existing email failed:', preCheckErr);
+        log.error('Pre-check existing email failed', { error: preCheckErr.stack || preCheckErr });
         return res.status(500).json({ error: 'Errore interno!' });
     }
     // Use a transaction so we rollback insert if email beginSend fails
@@ -128,14 +132,13 @@ router.put('/register', async (req, res) => {
 
         await client.query('COMMIT');
     } catch (err) {
-        console.error(err);
-        try { await client.query('ROLLBACK'); } catch (e) { console.error('Rollback failed:', e); }
+        log.error('Error during registration transaction', { error: err.stack || err });
+        try { await client.query('ROLLBACK'); } catch (e) { log.error('Rollback failed during registration', { error: e.stack || e }); }
         if (err.code === '23505') {
             client.release();
             return res.status(400).json({ error: 'Email già registrata!' });
         }
         client.release();
-        console.error(err);
         return res.status(500).json({ error: 'Errore interno!' });
     } finally {
         // ensure release if not already released
@@ -169,7 +172,7 @@ router.get('/register/confirmation/:code', async (req, res) => {
                 },
             );
         } catch (err) {
-            console.error("ERR WELCOME " + email + ": " + err);
+            log.error('Error sending welcome email', { email, error: err.stack || err });
             return res.status(500).json({ error: 'Errore interno!' });
         }
 
@@ -177,7 +180,7 @@ router.get('/register/confirmation/:code', async (req, res) => {
         
         return res.status(200).json({ message: 'Account confermato con successo! Ora puoi effettuare il login.' });
     } catch (err) {
-        console.error(err);
+        log.error('Error in register confirmation flow', { error: err.stack || err });
         return res.status(500).json({ error: 'Errore interno!' });
     }
 });
@@ -186,14 +189,19 @@ router.get('/register/confirmation/:code', async (req, res) => {
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
-  try {
+    try {
     const result = await pool.query('SELECT * FROM subscribers WHERE email = $1', [email]);
-    if (result.rowCount === 0)
-      return res.status(401).json({ error: 'Invalid credentials' });
+    if (result.rowCount === 0) {
+        log.warn('Login failed - email not found', { email: email?.toLowerCase(), ip: req.ip });
+        return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     const user = result.rows[0];
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!match) {
+        log.warn('Login failed - invalid password', { id: user.id, email: user.email, ip: req.ip });
+        return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     // generate JWT token of 1 min
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
@@ -204,7 +212,7 @@ router.post('/login', async (req, res) => {
     try{
         refreshToken = await generateRefreshToken(user.id, 365 * 24 * 60 * 60 * 1000); // 1 year
     }catch(e){
-        console.error('Failed to generate refresh token for user', user.id, e);
+        log.error('Failed to generate refresh token for user', { id: user.id, error: e.stack || e });
         return res.status(500).json({ error: 'Internal error' });
     }
 
@@ -214,7 +222,7 @@ router.post('/login', async (req, res) => {
             [user.id]
         );
     } catch (e) {
-        console.error('Failed to update last_login for user', user.id, e);
+        log.warn('Failed to update last_login for user', { id: user.id, error: e.stack || e });
     }
 
     // TEMP use flag onboarding for all users, then use flag notification == -1 for first login TODO
@@ -224,13 +232,14 @@ router.post('/login', async (req, res) => {
         sameSite: "lax",
         maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     });
+    log.info('Login success', { id: user.id, email: user.email, ip: req.ip });
     res.json({ token, onboarding: !user.onboarding });
     // update onboarding set to true after first login
     await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [user.id]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal error' });
-  }
+    } catch (err) {
+        log.error('Error in login', { error: err.stack || err });
+        res.status(500).json({ error: 'Internal error' });
+    }
 });
 
 // Refresh access token using a valid refresh token.
@@ -262,7 +271,7 @@ router.post('/refresh_token', async (req, res) => {
         try {
             newRefreshToken = crypto.randomBytes(64).toString('hex');
         } catch (e) {
-            console.error('Failed to generate new refresh token for user', user.id, e);
+            log.error('Failed to generate new refresh token for user', { id: user.id, error: e.stack || e });
             return res.status(500).json({ error: 'Internal error' });
         }
 
@@ -281,7 +290,7 @@ router.post('/refresh_token', async (req, res) => {
 
         return res.status(200).json({ token: newAccessToken });
     } catch (err) {
-        console.error(err);
+        log.error('Error in refresh_token', { error: err.stack || err });
         return res.status(500).json({ error: 'Internal error' });
     }
 });
@@ -293,8 +302,8 @@ router.post('/logout', authenticateToken, async (req, res) => {
     await pool.query('DELETE FROM refresh_tokens WHERE token = $1', [refreshToken]);
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal error' });
+        log.error('Error during logout', { error: err.stack || err });
+        res.status(500).json({ error: 'Internal error' });
   }
 });
 
@@ -302,6 +311,7 @@ router.post('/request-change-password', async (req, res) => {
     let { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email non fornita' });
     email = email.trim().toLowerCase();
+    log.info('POST /request-change-password', { email, ip: req.ip });
     try {
         const user = await userExistsByEmail(email);
         if (!user) return res.status(404).json({ error: 'Email non registrata' });
@@ -316,7 +326,7 @@ router.post('/request-change-password', async (req, res) => {
                 [randomCode, email]
             );
         } catch (err) {
-            console.error('ERR SET TEMP SECRET ' + email + ': ' + err);
+            log.error('ERR SET TEMP SECRET', { email, error: err.stack || err });
             return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
         }
 
@@ -331,13 +341,13 @@ router.post('/request-change-password', async (req, res) => {
                 }
             );
         } catch (mailErr) {
-            console.error('ERR SEND RESET EMAIL ' + email + ': ' + mailErr);
+            log.error('ERR SEND RESET EMAIL', { email, error: mailErr.stack || mailErr });
             return res.status(500).json({ error: 'Si è verificato un errore nell\'invio dell\'email.' });
         }
 
         return res.status(200).json({ message: 'Ti abbiamo inviato un codice per reimpostare la password. Controlla anche lo SPAM.' });
     } catch (err) {
-        console.error('ERR REQ CNG PSW', email, ':', err);
+        log.error('Error in request-change-password', { email, error: err.stack || err });
         return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
     }
 });
@@ -356,7 +366,7 @@ router.post('/otp-change-password', async (req, res) => {
 
         return res.sendStatus(200);
     } catch (err) {
-        console.error('ERR OTP CNG PSW', email, ':', err);
+        log.error('Error in otp-change-password', { email, error: err.stack || err });
         return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
     }
 });
@@ -389,7 +399,7 @@ router.post('/new-change-password', async (req, res) => {
 
         return res.status(200).json({ message: 'Password cambiata con successo' });
     } catch (err) {
-        console.error('ERR NEW CNG PSW', email, ':', err);
+        log.error('Error in new-change-password', { email, error: err.stack || err });
         return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
     }
 });

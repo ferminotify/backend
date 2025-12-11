@@ -1,10 +1,12 @@
 import express from 'express';
 import pool from '../db.js';
 import dotenv from 'dotenv';
+import logger from '../utils/logger.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 dotenv.config();
 
 const router = express.Router();
+const log = logger.child('telegram');
 
 router.post('/disconnect', async (req, res) => {
     const userId = req.user.id;
@@ -24,7 +26,7 @@ router.post('/disconnect', async (req, res) => {
         }
 
         if (!new_telegram_code) {
-            console.error('Failed to generate a unique telegram temporary code after', MAX_ATTEMPTS, 'attempts');
+            log.error('Failed to generate a unique telegram temporary code', { attempts: MAX_ATTEMPTS });
             return res.status(500).json({ error: 'Could not generate unique telegram code' });
         }
 
@@ -33,9 +35,10 @@ router.post('/disconnect', async (req, res) => {
             [new_telegram_code, userId]
         );
 
+        log.info('Telegram disconnected for user', { userId, telegram: result.rows[0].telegram });
         res.json({ message: 'Telegram disconnected successfully', telegram: result.rows[0].telegram });
     } catch (error) {
-        console.error('Error disconnecting Telegram:', error);
+        log.error('Error disconnecting Telegram', { userId, error: error.stack || error });
         res.status(500).json({ error: 'Internal server error' });
     }
 });

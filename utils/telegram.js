@@ -1,5 +1,6 @@
 import pool from '../db.js'; 
-
+import logger from './logger.js';
+const log = logger.child('utils-telegram');
 export async function getTelegramTemporaryCode() {
   /**
    * This function returns the code that
@@ -39,6 +40,6 @@ async function getAllTelegram() {
     );
     return RES.rows[0].telegram;
   } catch (err) {
-    console.error(err.stack);
+    log.error('Error fetching all telegram codes', { error: err && err.stack ? err.stack : err });
   }
 }

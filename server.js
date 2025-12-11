@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import logger from './utils/logger.js';
 import authRouter, { authenticateToken } from './routes/auth.js';
 import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
@@ -9,6 +10,7 @@ import cookieParser from 'cookie-parser';
 dotenv.config();
 
 const app = express();
+const log = logger.child('server');
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const corsOptions = {
   origin: FRONTEND_ORIGIN,
@@ -33,4 +35,4 @@ app.get('/', (req, res) => {
   res.send('Fermi Notify Backend is running.');
 });
 
-app.listen(3001, () => console.log('Server running on port 3001'));
+app.listen(3001, () => log.info('Server running on port 3001'));

@@ -1,11 +1,13 @@
 import express from "express";
 import webpush from "web-push";
 import dotenv from "dotenv";
+import logger from '../utils/logger.js';
 dotenv.config();
 import pool from '../db.js';
 import { authenticateToken } from "./auth.js";
 
 const router = express.Router();
+const log = logger.child('push');
 
 // Environment VAPID keys (expected to be URL-safe Base64, but we trust input)
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
@@ -13,7 +15,7 @@ const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const NOTIFICATION_API_KEY = process.env.NOTIFICATION_API_KEY || "";
 
 if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-  console.warn("[push] Missing VAPID keys. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.");
+  log.warn('Missing VAPID keys. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.');
 } else {
   webpush.setVapidDetails("mailto:mail@fn.lkev.in", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 }
@@ -99,7 +101,7 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
   // Maintain in-memory map for fast broadcast if desired (optional)
   const updated = subscriptions.has(endpoint);
   subscriptions.set(endpoint, { endpoint, keys: { p256dh, auth } });
-  console.log(`[push] ${updated ? 'Updated' : 'Stored'} subscription in memory:`, endpoint);
+  log.info(`${updated ? 'Updated' : 'Stored'} subscription in memory`, { endpoint });
 
   try {
         const upd = await pool.query(
@@ -120,9 +122,9 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
           [userId, endpoint, p256dh, auth, device_id, device_info]
         );
 
-        console.log(`[push] Stored subscription in DB for user ${userId}:`, endpoint);
+        log.info('Stored subscription in DB for user', { userId, endpoint });
       } catch (err) {
-        console.error('[push] DB upsert failed for user', userId, err);
+        log.error('DB upsert failed for user', { userId, error: err.stack || err });
         return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
       }
 
@@ -151,19 +153,20 @@ router.post("/notify", async (req, res) => {
       sub = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
       // cache in memory for future
       subscriptions.set(endpoint, sub);
-      console.log('[push] Loaded subscription from DB into memory:', endpoint);
+      log.info('Loaded subscription from DB into memory', { endpoint });
     } catch (err) {
-      console.error('[push] DB error fetching subscription for notify:', err);
+      log.error('DB error fetching subscription for notify', { error: err.stack || err });
       return res.status(500).json({ ok: false, error: "No subscription found / DB error occurred." });
     }
   }
 
   try {
     await webpush.sendNotification(sub, payload);
+    log.info('Sent push notification', { endpoint });
     return res.json({ ok: true });
   } catch (err) {
     const status = err?.statusCode;
-    console.error('[push] Send notification failed:', status, err);
+    log.error('Send notification failed', { status, error: err.stack || err, endpoint });
 
     // If subscription is gone or keys mismatch, remove from DB and memory so future sends don't fail
     if (status === 404 || status === 410 || status === 403) {
@@ -200,18 +203,18 @@ router.post("/notify/broadcast", async (req, res) => {
         const status = err?.statusCode;
         // 404/410 = subscription gone. 403 = VAPID auth mismatch.
         if (status === 404 || status === 410 || status === 403) {
-          // remove stale subscription (DB + memory)
-          await removeSubscription(sub.endpoint, status === 403 ? 'key mismatch' : 'stale');
+              // remove stale subscription (DB + memory)
+              await removeSubscription(sub.endpoint, status === 403 ? 'key mismatch' : 'stale');
           removed += 1;
           continue; // continue loop – do NOT abort broadcast
         }
 
-        console.error('[push] Send failed (non-removable error): [', status, '] endpoint=', sub.endpoint, err);
+            log.error('Send failed (non-removable error)', { status, endpoint: sub.endpoint, error: err.stack || err });
         return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
       }
     }
   } catch (err) {
-    console.error('Error sending notifications:', err);
+        log.error('Error sending notifications', { error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno durante l'invio delle notifiche." });
   }
 
@@ -221,7 +224,7 @@ router.post("/notify/broadcast", async (req, res) => {
     const countRes = await pool.query('SELECT count(*)::int AS c FROM push');
     total = countRes.rows[0]?.c ?? total;
   } catch (countErr) {
-    console.warn('[push] Could not fetch total count after notify:', countErr.message);
+    log.warn('Could not fetch total count after notify', { message: countErr.message });
   }
 
   res.json({ ok: true, sent, removed, total });
@@ -237,19 +240,19 @@ router.post("/unsubscribe", authenticateToken, async (req, res) => {
   // Remove from in-memory map
   const existed = subscriptions.delete(endpoint);
   if (existed) {
-    console.log('[push] Removed subscription from memory:', endpoint);
+    log.info('Removed subscription from memory', { endpoint });
   }
 
   try {
     const result = await pool.query(`DELETE FROM push WHERE endpoint = $1 AND sub_id = $2`, [endpoint, userId]);
     if (result.rowCount > 0) {
-      console.log(`[push] Unsubscribed user ${userId} from endpoint:`, endpoint);
+      log.info('Unsubscribed user from endpoint', { userId, endpoint });
       return res.json({ ok: true, unsubscribed: true });
     } else {
       return res.status(404).json({ ok: false, error: "Subscription not found for user." });
     }
   } catch (err) {
-    console.error('[push] DB error during unsubscribe for user', userId, err);
+    log.error('DB error during unsubscribe for user', { userId, error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
   }
 });
@@ -275,8 +278,8 @@ router.post("/send-push-with-notifications", authenticateToken, async (req, res)
     );
 
     return res.json({ ok: true, updated: result.rowCount > 0 });
-  } catch (err) {
-    console.error('[push] DB error updating send_push_with_notifications for user', userId, err);
+    } catch (err) {
+    log.error('DB error updating send_push_with_notifications for user', { userId, error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
   }
 });
@@ -294,8 +297,8 @@ router.get("/devices", authenticateToken, async (req, res) => {
     );
 
     return res.json({ ok: true, devices: result.rows });
-  } catch (err) {
-    console.error('[push] DB error fetching devices for user', userId, err);
+    } catch (err) {
+    log.error('DB error fetching devices for user', { userId, error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
   }
 });
@@ -314,8 +317,8 @@ router.delete("/devices/:device_id", authenticateToken, async (req, res) => {
     );
 
     return res.json({ ok: true, deleted: result.rowCount > 0 });
-  } catch (err) {
-    console.error('[push] DB error deleting device for user', userId, err);
+    } catch (err) {
+    log.error('DB error deleting device for user', { userId, error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
   }
 });
@@ -337,8 +340,8 @@ router.post("/update-device-info", authenticateToken, async (req, res) => {
     );
 
     return res.json({ ok: true, updated: result.rowCount > 0 });
-  } catch (err) {
-    console.error('[push] DB error updating device_info for user', userId, err);
+    } catch (err) {
+    log.error('DB error updating device_info for user', { userId, error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
   }
 });

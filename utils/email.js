@@ -1,6 +1,8 @@
 
 import dotenv from 'dotenv';
+import logger from './logger.js';
 dotenv.config();
+const log = logger.child('email');
 
 import { EmailClient } from "@azure/communication-email";
 const connectionString = process.env.AZURE_EMAIL_CONNECTION_STRING;
@@ -37,7 +39,7 @@ export async function sendMail(to, subject, html, plainText, headers = {}) {
     try {
       poller = await EmailCl.beginSend(message);
     } catch (beginErr) {
-      console.error('Email beginSend threw:', beginErr && beginErr.message ? beginErr.message : beginErr)
+      log.error('Email beginSend threw', { error: beginErr && beginErr.message ? beginErr.message : beginErr });
       throw new Error('Failed to start email send operation: ' + (beginErr && beginErr.message ? beginErr.message : beginErr))
     }
 
@@ -71,7 +73,7 @@ export async function sendMail(to, subject, html, plainText, headers = {}) {
     }
 
     if(result.status === "Succeeded") {
-      console.log(`SUCCESS sent email (operation id: ${result.id}) to ${to}`);
+      log.info('SUCCESS sent email', { operationId: result.id, to });
     } else {
       throw new Error(result.error || "Email send failed");
     }
@@ -105,7 +107,7 @@ export async function sendMailAsync(to, subject, html, plainText, headers = {}) 
     // Return operationLocation or poller id so callers can track if needed.
     return { operationLocation: poller?.config?.operationLocation, opState }
   } catch (e) {
-    console.error('sendMailAsync beginSend failed:', e && e.message ? e.message : e)
+    log.error('sendMailAsync beginSend failed', { error: e && e.message ? e.message : e });
     throw new Error('Failed to start async email send: ' + (e && e.message ? e.message : e))
   }
 }
