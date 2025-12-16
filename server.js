@@ -11,9 +11,23 @@ dotenv.config();
 
 const app = express();
 const log = logger.child('server');
+// Support multiple allowed frontend origins. Set `FRONTEND_ORIGIN` to a comma-separated
+// list like: "https://fn.lkev.in,https://ferminotify.lkev.in,https://pwa.fn.lkev.in"
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const FRONTEND_ORIGINS = FRONTEND_ORIGIN.split(',').map(s => s.trim()).filter(Boolean);
+
 const corsOptions = {
-  origin: FRONTEND_ORIGIN,
+  origin: function (origin, callback) {
+    // Allow non-browser requests (e.g. curl, server-to-server) where origin is undefined
+    if (!origin) return callback(null, true);
+
+    if (FRONTEND_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+
+    // Reject other origins
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
