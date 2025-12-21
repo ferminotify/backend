@@ -187,13 +187,14 @@ router.get('/register/confirmation/:code', async (req, res) => {
 
 /* LOGIN */
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  var { email, password } = req.body;
+    email = email.trim().toLowerCase();
 
     try {
     const result = await pool.query('SELECT * FROM subscribers WHERE email = $1', [email]);
     if (result.rowCount === 0) {
         log.warn('Login failed - email not found', { email: email?.toLowerCase(), ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
+        return res.status(404).json({ error: 'Email not found' });
     }
 
     const user = result.rows[0];
