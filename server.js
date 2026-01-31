@@ -25,15 +25,30 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Reject other origins
-    return callback(new Error('Not allowed by CORS'));
+    // Reject other origins - error logged in middleware below
+    return callback(new Error(`CORS rejected origin: ${origin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 };
 
+// Log incoming requests before CORS check for debugging
+app.use((req, res, next) => {
+  log.debug(`Incoming request: ${req.method} ${req.originalUrl} from origin: ${req.headers.origin || 'no-origin'}`);
+  next();
+});
+
 app.use(cors(corsOptions));
+
+// CORS error handler
+app.use((err, req, res, next) => {
+  if (err.message && err.message.startsWith('CORS rejected')) {
+    log.warn(`CORS blocked: ${req.method} ${req.originalUrl} - Origin: ${req.headers.origin} - Allowed: [${FRONTEND_ORIGINS.join(', ')}]`);
+    return res.status(403).json({ error: 'Not allowed by CORS', origin: req.headers.origin });
+  }
+  next(err);
+});
 app.use(express.json());
 app.use(cookieParser());
 
