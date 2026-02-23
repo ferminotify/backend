@@ -41,7 +41,8 @@ app.use((req, res, next) => {
 });
 
 // Media route without CORS restrictions (for backend server-to-server access)
-app.use('/media', mediaRouter);
+// Mounted at root to expose folders directly: /email/v3/logo.png, /email/v4/logo.png, etc.
+app.use('/', mediaRouter);
 
 app.use(cors(corsOptions));
 
