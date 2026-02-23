@@ -33,12 +33,6 @@ router.use((req, res, next) => {
     return res.status(403).json({ error: 'Invalid filepath' });
   }
 
-  // Check if file has an extension (not a directory)
-  if (path.extname(filePath) === '') {
-    log.warn('Attempted to access a directory', { filepath, ip: req.ip });
-    return res.status(403).json({ error: 'Invalid filepath' });
-  }
-
   // Check if file exists in media directory before trying to serve
   fs.access(filePath, fs.constants.F_OK, (err) => {
     if (err) {
