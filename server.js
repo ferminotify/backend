@@ -5,6 +5,7 @@ import logger from './utils/logger.js';
 import authRouter, { authenticateToken } from './routes/auth.js';
 import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
+import mediaRouter from './routes/media.js';
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
@@ -38,6 +39,9 @@ app.use((req, res, next) => {
   log.debug(`Incoming request: ${req.method} ${req.originalUrl} from origin: ${req.headers.origin || 'no-origin'}`);
   next();
 });
+
+// Media route without CORS restrictions (for backend server-to-server access)
+app.use('/media', mediaRouter);
 
 app.use(cors(corsOptions));
 
