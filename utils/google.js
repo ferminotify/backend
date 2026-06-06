@@ -9,10 +9,11 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI || `${API_URL}/user/auth/google/callback`;
 
-// Base URL of the SPA the user lands on after the OAuth dance. The first entry
-// of FRONTEND_ORIGIN (used by CORS) wins, falling back to the prod site.
-export const FRONTEND_BASE =
-  (process.env.FRONTEND_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean)[0] || URL;
+// Base URL of the SPA the user lands on after the OAuth dance.
+// Set FRONTEND_URL explicitly per environment (dev: http://localhost:5173,
+// prod: https://fn.lkev.in). Falls back to the canonical site URL — never to the
+// CORS allowlist, whose order is arbitrary.
+export const FRONTEND_BASE = process.env.FRONTEND_URL || URL;
 
 export function isGoogleConfigured() {
   return !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);

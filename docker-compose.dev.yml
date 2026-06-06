@@ -56,6 +56,8 @@ services:
       VAPID_PRIVATE_KEY: blWgjM0tMG3-eh7uJ7wjQwpPFhXELBfoWAFh0y5CPDA
       NOTIFICATION_API_KEY: dev-broadcast-key
       FRONTEND_ORIGIN: http://localhost:5173
+      FRONTEND_URL: http://localhost:5173
+      GOOGLE_REDIRECT_URI: http://localhost:3001/user/auth/google/callback
       # Azure email empty → email flows log errors but app doesn't crash.
       # To test registration/OTP set a real AZURE_EMAIL_CONNECTION_STRING here.
       AZURE_EMAIL_CONNECTION_STRING: ""
