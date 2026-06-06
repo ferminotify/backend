@@ -6,7 +6,11 @@ const log = logger.child('email');
 
 import { EmailClient } from "@azure/communication-email";
 const connectionString = process.env.AZURE_EMAIL_CONNECTION_STRING;
-const EmailCl = new EmailClient(connectionString);
+
+function getEmailClient() {
+  if (!connectionString) throw new Error('AZURE_EMAIL_CONNECTION_STRING is not set');
+  return new EmailClient(connectionString);
+}
 
 export async function sendMail(to, subject, html, plainText, headers = {}) {
   const POLLER_WAIT_TIME = 10;
@@ -31,13 +35,9 @@ export async function sendMail(to, subject, html, plainText, headers = {}) {
       headers: headers
     };
 	
-    if (!connectionString) {
-      throw new Error('AZURE_EMAIL_CONNECTION_STRING is not set')
-    }
-
     let poller
     try {
-      poller = await EmailCl.beginSend(message);
+      poller = await getEmailClient().beginSend(message);
     } catch (beginErr) {
       log.error('Email beginSend threw', { error: beginErr && beginErr.message ? beginErr.message : beginErr });
       throw new Error('Failed to start email send operation: ' + (beginErr && beginErr.message ? beginErr.message : beginErr))
@@ -85,10 +85,6 @@ export async function sendMail(to, subject, html, plainText, headers = {}) {
 // Non-blocking send: start the send operation but don't poll to completion.
 // This is useful when the caller shouldn't be blocked by the long-running poller.
 export async function sendMailAsync(to, subject, html, plainText, headers = {}) {
-  if (!connectionString) {
-    throw new Error('AZURE_EMAIL_CONNECTION_STRING is not set')
-  }
-
   const message = {
     senderAddress: "<donotreply@fn.lkev.in>",
     content: {
@@ -101,8 +97,7 @@ export async function sendMailAsync(to, subject, html, plainText, headers = {}) 
   }
 
   try {
-    // beginSend may throw quickly if credentials/sender are invalid.
-    const poller = await EmailCl.beginSend(message)
+    const poller = await getEmailClient().beginSend(message)
     const opState = poller?.getOperationState && poller.getOperationState()
     // Return operationLocation or poller id so callers can track if needed.
     return { operationLocation: poller?.config?.operationLocation, opState }
