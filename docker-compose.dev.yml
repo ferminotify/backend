@@ -1,0 +1,76 @@
+name: ferminotify-dev
+
+services:
+
+  db:
+    container_name: fn-db
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fn-test-db
+      POSTGRES_USER: fn-test-user
+      POSTGRES_PASSWORD: test
+    volumes:
+      - ./docker/db_init.sql:/docker-entrypoint-initdb.d/init.sql
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fn-test-user -d fn-test-db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ferminotify-dev
+
+  # Email catcher — Web UI: http://localhost:8025
+  mailpit:
+    container_name: fn-mailpit
+    image: axllent/mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - ferminotify-dev
+
+  backend:
+    container_name: fn-backend
+    image: ferminotify/dev-backend
+    build: .
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: node --watch server.js
+    environment:
+      NODE_ENV: development
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: fn-test-db
+      DB_USER: fn-test-user
+      DB_PASSWORD: test
+      DB_SSL_CERT: ""  # empty → SSL disabled (overrides .env mounted via volume)
+      JWT_SECRET: dev-jwt-secret-not-for-production
+      VAPID_PUBLIC_KEY: BKKJNg3KHzlLoU7ecD-7Vh9OLfa7aeaLUfRbyO8LHImbaiI_tkBXIDm5zX9DT-MXk9vjrNRLWYxD-lK9v3Nns7Y
+      VAPID_PRIVATE_KEY: blWgjM0tMG3-eh7uJ7wjQwpPFhXELBfoWAFh0y5CPDA
+      NOTIFICATION_API_KEY: dev-broadcast-key
+      FRONTEND_ORIGIN: http://localhost:5173
+      # Azure email empty → email flows log errors but app doesn't crash.
+      # To test registration/OTP set a real AZURE_EMAIL_CONNECTION_STRING here.
+      AZURE_EMAIL_CONNECTION_STRING: ""
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - ferminotify-dev
+
+networks:
+  ferminotify-dev:
+    name: ferminotify-dev
+    driver: bridge
+
+volumes:
+  db_data:
