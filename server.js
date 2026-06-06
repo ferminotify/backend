@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import logger from './utils/logger.js';
 import authRouter, { authenticateToken } from './routes/auth.js';
+import googleRouter from './routes/google.js';
 import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
 import mediaRouter from './routes/media.js';
@@ -58,6 +59,8 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/user/auth/google', googleRouter);
 
 app.use('/user/auth', authRouter);
 

@@ -1,4 +1,5 @@
 import express from 'express';
+import bcrypt from 'bcrypt';
 import pool from '../db.js';
 import dotenv from 'dotenv';
 import keywordRouter from './keyword.js';
@@ -37,6 +38,7 @@ router.get('/profile', async (req, res) => {
                 s.include_similar_tags,
                 s.notification_day_before,
                 s.notification_time,
+                s.profile_complete,
                 COALESCE(
                     json_agg(
                         json_build_object(
@@ -146,6 +148,71 @@ router.post('/edit', async (req, res) => {
     } catch (error) {
         log.error('Error updating profile', { error: error.stack || error });
         res.status(500).json({ message: 'Internal server error.' });
+    }
+});
+
+// Finish a Google signup: collect the fields Google can't provide (gender) and
+// clear the profile_complete flag so the frontend stops routing here.
+router.post('/complete-profile', async (req, res) => {
+    if (!req.user?.id) {
+        log.warn('No user ID found in request for complete-profile. Rejecting.');
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const userId = req.user.id;
+    let { name, surname, gender, password, password2 } = req.body;
+
+    if (!gender || !['M', 'F', 'X'].includes(gender)) {
+        return res.status(400).json({ error: 'Genere non valido!' });
+    }
+
+    name = typeof name === 'string' ? name.trim() : undefined;
+    surname = typeof surname === 'string' ? surname.trim() : undefined;
+
+    // Password is optional here (Google onboarding). If provided, validate + hash.
+    let hashedPassword;
+    if (password) {
+        if (password.length < 6) {
+            return res.status(400).json({ error: 'La password deve essere lunga almeno 6 caratteri!' });
+        }
+        if (password !== password2) {
+            return res.status(400).json({ error: 'Le password non corrispondono!' });
+        }
+        hashedPassword = await bcrypt.hash(password, 10);
+    }
+
+    try {
+        const fields = ['gender = $1', 'profile_complete = TRUE'];
+        const values = [gender];
+        let index = 2;
+
+        if (name) {
+            fields.push(`name = $${index++}`);
+            values.push(name);
+        }
+        if (surname) {
+            fields.push(`surname = $${index++}`);
+            values.push(surname);
+        }
+        if (hashedPassword) {
+            fields.push(`password = $${index++}`);
+            values.push(hashedPassword);
+        }
+
+        // Onboarding flag (mirrors /login): true on first entry, then mark done.
+        const ob = await pool.query('SELECT onboarding FROM subscribers WHERE id = $1', [userId]);
+        const onboarding = !ob.rows[0]?.onboarding;
+
+        values.push(userId);
+        const query = `UPDATE subscribers SET ${fields.join(', ')} WHERE id = $${index}`;
+        await pool.query(query, values);
+        await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [userId]);
+
+        log.info('Profile completed', { id: userId });
+        return res.status(200).json({ message: 'Profilo completato.', onboarding });
+    } catch (error) {
+        log.error('Error completing profile', { error: error.stack || error });
+        return res.status(500).json({ error: 'Internal server error.' });
     }
 });
 

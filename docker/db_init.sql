@@ -11,7 +11,7 @@ CREATE TABLE public.subscribers (
     name                     character varying(50)  NOT NULL,
     surname                  character varying(50)  NOT NULL,
     email                    character varying(50)  NOT NULL UNIQUE,
-    password                 character varying(120) NOT NULL,
+    password                 character varying(120),
     telegram                 character varying(50)  UNIQUE,
     tags                     text[],
     notifications            smallint,
@@ -26,7 +26,9 @@ CREATE TABLE public.subscribers (
     temp_dash_orario         boolean                DEFAULT false,
     include_similar_tags     boolean                DEFAULT true,
     last_login               timestamp without time zone,
-    onboarding               boolean                DEFAULT false
+    onboarding               boolean                DEFAULT false,
+    google_id                character varying(40)  UNIQUE,
+    profile_complete         boolean                DEFAULT true
 );
 
 -- ── refresh_tokens ────────────────────────────────────────────────────────────

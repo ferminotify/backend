@@ -210,6 +210,11 @@ router.post('/login', async (req, res) => {
     }
 
     const user = result.rows[0];
+    // Google-only accounts have no password set.
+    if (!user.password) {
+        log.warn('Login failed - account has no password (Google-only)', { id: user.id, email: user.email, ip: req.ip });
+        return res.status(401).json({ error: 'Questo account usa l\'accesso con Google.', code: 'google_only' });
+    }
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
         log.warn('Login failed - invalid password', { id: user.id, email: user.email, ip: req.ip });
