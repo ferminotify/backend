@@ -18,6 +18,16 @@ const log = logger.child('google-oauth');
 const STATE_COOKIE = 'g_oauth_state';
 const isProd = process.env.NODE_ENV === 'production';
 
+// The state cookie must survive the cross-site redirect back from Google.
+// Prod (HTTPS): SameSite=None + Secure is the reliable choice. Dev (http://localhost):
+// SameSite=None is rejected without Secure, and Secure is dropped on plain http, so use Lax.
+const STATE_COOKIE_OPTS = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: isProd ? 'none' : 'lax',
+  maxAge: 10 * 60 * 1000, // 10 minutes
+};
+
 // Redirect helper to the SPA, carrying an error message in the query string.
 function redirectError(res, message) {
   const url = `${FRONTEND_BASE}/login?error=${encodeURIComponent(message)}`;
@@ -32,12 +42,7 @@ router.get('/', (req, res) => {
   }
 
   const state = crypto.randomBytes(32).toString('hex');
-  res.cookie(STATE_COOKIE, state, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'lax',
-    maxAge: 10 * 60 * 1000, // 10 minutes
-  });
+  res.cookie(STATE_COOKIE, state, STATE_COOKIE_OPTS);
 
   return res.redirect(buildConsentUrl(state));
 });
@@ -53,9 +58,15 @@ router.get('/callback', async (req, res) => {
 
   // CSRF: state from query must match the cookie set in step 1.
   const cookieState = req.cookies?.[STATE_COOKIE];
-  res.clearCookie(STATE_COOKIE);
+  res.clearCookie(STATE_COOKIE, { httpOnly: true, secure: isProd, sameSite: isProd ? 'none' : 'lax' });
   if (!code || !state || !cookieState || state !== cookieState) {
-    log.warn('Invalid OAuth state or missing code', { hasCode: !!code, hasState: !!state });
+    log.warn('Invalid OAuth state or missing code', {
+      hasCode: !!code,
+      hasState: !!state,
+      hasCookie: !!cookieState,
+      stateMatches: !!cookieState && state === cookieState,
+      cookieNames: Object.keys(req.cookies || {}),
+    });
     return redirectError(res, 'Sessione di accesso non valida. Riprova.');
   }
 

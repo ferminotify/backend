@@ -116,6 +116,11 @@ export async function sendMail(to, subject, html, plainText, headers = {}) {
 // Non-blocking send: start the send operation but don't poll to completion.
 // This is useful when the caller shouldn't be blocked by the long-running poller.
 export async function sendMailAsync(to, subject, html, plainText, headers = {}) {
+  if (!connectionString) {
+    log.warn('No AZURE_EMAIL_CONNECTION_STRING — email skipped', { to, subject, plainText });
+    return { skipped: true };
+  }
+
   const message = {
     senderAddress: "<donotreply@fn.lkev.in>",
     content: {
