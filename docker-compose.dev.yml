@@ -58,9 +58,12 @@ services:
       FRONTEND_ORIGIN: http://localhost:5173
       FRONTEND_URL: http://localhost:5173
       GOOGLE_REDIRECT_URI: http://localhost:3001/user/auth/google/callback
-      # Azure email empty → email flows log errors but app doesn't crash.
-      # To test registration/OTP set a real AZURE_EMAIL_CONNECTION_STRING here.
+      # Azure email empty → falls back to the Mailpit SMTP catcher below.
+      # To use real Azure instead, set a real AZURE_EMAIL_CONNECTION_STRING here.
       AZURE_EMAIL_CONNECTION_STRING: ""
+      # Dev-only: when Azure is empty, emails go to Mailpit (UI: http://localhost:8025)
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
     ports:
       - "3001:3001"
     depends_on:
