@@ -9,16 +9,7 @@ import logger from '../utils/logger.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendMailAsync } from '../utils/email.js';
 import { API_URL, URL } from '../utils/config.js';
-import {
-    getUserEmailWithTelegramID,
-    getNumberNotification,
-    getGenderByEmail,
-    getFirstNameByEmail,
-    getUnsubscribeInfoByEmail,
-    incrementNumberNotification,
-    userExistsByEmail,
-    verifyUserOTP
-} from '../utils/utils.js';
+import subscriberRepo from '../repositories/subscriber.repository.js';
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
 dotenv.config();
@@ -162,14 +153,15 @@ router.get('/register/confirmation/:code', async (req, res) => {
     const code = req.params.code;
 
     try {
-        const email = await getUserEmailWithTelegramID(code);
-        if (!email) return res.status(400).json({ error: 'Codice di conferma non valido!' });
-        
-        if (await getNumberNotification(email) > -1) return res.status(400).json({ error: 'Account già confermato!' });
+        // Single round-trip: pull every column the welcome flow needs by the
+        // confirmation code, instead of 5 separate SELECTs by email.
+        const sub = await subscriberRepo.findByTelegram(code);
+        if (!sub) return res.status(400).json({ error: 'Codice di conferma non valido!' });
 
-        let gender = await getGenderByEmail(email);
-        let name = await getFirstNameByEmail(email);
-        let unsub_info = await getUnsubscribeInfoByEmail(email);
+        if (sub.notifications > -1) return res.status(400).json({ error: 'Account già confermato!' });
+
+        const { email, gender, name } = sub;
+        const unsub_info = { id: sub.id, unsub_token: sub.unsub_token, notification_preferences: sub.notification_preferences };
         const safeName = escapeHtml(name);
 
         // send welcome email
@@ -188,8 +180,8 @@ router.get('/register/confirmation/:code', async (req, res) => {
             return res.status(500).json({ error: 'Errore interno!' });
         }
 
-        const a = await incrementNumberNotification(code);
-        
+        await subscriberRepo.incrementNotificationsByTelegram(code);
+
         return res.status(200).json({ message: 'Account confermato con successo! Ora puoi effettuare il login.' });
     } catch (err) {
         log.error('Error in register confirmation flow', { error: err.stack || err });
@@ -331,7 +323,7 @@ router.post('/request-change-password', async (req, res) => {
     email = email.trim().toLowerCase();
     log.info('POST /request-change-password', { email, ip: req.ip });
     try {
-        const user = await userExistsByEmail(email);
+        const user = await subscriberRepo.findByEmail(email);
         if (!user) return res.status(404).json({ error: 'Email non registrata' });
         const name = user.name || '';
         if (!name) return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
@@ -377,7 +369,7 @@ router.post('/otp-change-password', async (req, res) => {
     email = email.trim().toLowerCase();
     otp = otp.trim().toUpperCase();
     try {
-        const valid = await verifyUserOTP(email, otp);
+        const valid = await subscriberRepo.verifyOTP(email, otp);
 
         if (valid !== "OK") {
             return res.status(400).json({ error: valid });
@@ -404,7 +396,7 @@ router.post('/new-change-password', async (req, res) => {
         return res.status(400).json({ error: 'La password deve essere lunga almeno 6 caratteri' });
     
     try {
-        const valid = await verifyUserOTP(email, otp);
+        const valid = await subscriberRepo.verifyOTP(email, otp);
 
         if (valid !== "OK") {
             return res.status(400).json({ error: valid });
