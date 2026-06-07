@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import pool from '../db.js';
 import dotenv from 'dotenv';
+import { getUserEvents } from '../utils/events.js';
 import keywordRouter from './keyword.js';
 import preferencesRouter from './preferences.js';
 import TelegramRouter from './telegram.js';
@@ -39,6 +40,7 @@ router.get('/profile', async (req, res) => {
                 s.notification_day_before,
                 s.notification_time,
                 s.profile_complete,
+                s.ical_token,
                 COALESCE(
                     json_agg(
                         json_build_object(
@@ -212,6 +214,57 @@ router.post('/complete-profile', async (req, res) => {
         return res.status(200).json({ message: 'Profilo completato.', onboarding });
     } catch (error) {
         log.error('Error completing profile', { error: error.stack || error });
+        return res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Day key (YYYY-MM-DD) for an event, in Europe/Rome.
+function eventDayKey(e) {
+  if (e.start.date) return e.start.date; // all-day: already YYYY-MM-DD
+  if (e.start.dateTime) {
+    return new Date(e.start.dateTime).toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+  }
+  return '';
+}
+
+// User's variazioni for the lookahead window, grouped by day.
+router.get('/events/week', async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const u = await pool.query(
+            'SELECT id, tags, include_similar_tags FROM subscribers WHERE id = $1',
+            [req.user.id]
+        );
+        if (u.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+
+        const events = await getUserEvents(u.rows[0]);
+
+        const byDay = {};
+        for (const e of events) {
+            const key = eventDayKey(e);
+            if (!key) continue;
+            (byDay[key] ||= []).push(e);
+        }
+        const days = Object.keys(byDay).sort().map((date) => ({ date, events: byDay[date] }));
+
+        return res.json({ days });
+    } catch (error) {
+        log.error('Error fetching week events', { error: error.stack || error });
+        return res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Rotate the iCal subscription token (invalidates the old feed URL).
+router.post('/ical/regenerate', async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+        const r = await pool.query(
+            'UPDATE subscribers SET ical_token = uuid_generate_v4() WHERE id = $1 RETURNING ical_token',
+            [req.user.id]
+        );
+        return res.json({ ical_token: r.rows[0].ical_token });
+    } catch (error) {
+        log.error('Error regenerating ical token', { error: error.stack || error });
         return res.status(500).json({ error: 'Internal server error.' });
     }
 });

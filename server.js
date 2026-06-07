@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import logger from './utils/logger.js';
 import authRouter, { authenticateToken } from './routes/auth.js';
 import googleRouter from './routes/google.js';
+import calendarRouter from './routes/calendar.js';
 import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
 import mediaRouter from './routes/media.js';
@@ -61,6 +62,9 @@ app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/user/auth/google', googleRouter);
+
+// Public iCal feed (token in URL) — must be before the authenticated /user mount.
+app.use('/user/calendar', calendarRouter);
 
 app.use('/user/auth', authRouter);
 
