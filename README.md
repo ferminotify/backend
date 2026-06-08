@@ -17,7 +17,7 @@ API REST del servizio Fermi Notify, realizzata con Node.js ed Express. Gestisce 
 
 - Docker + Docker Compose v2
 
-Il compose del backend è il **punto di partenza** per l'intero stack di sviluppo: crea il DB, MailPit e la rete Docker condivisa `ferminotify-dev`.
+Il compose del backend è il **punto di partenza** per l'intero stack di sviluppo: crea il DB, MailPit, Adminer e la rete Docker condivisa `ferminotify-dev`.
 
 ### Avvio
 
@@ -54,7 +54,8 @@ docker compose -f docker-compose.dev.yml down -v
 |----------|-----------|-------------|
 | `backend` | `3001` | API REST |
 | `db` | `5434` | PostgreSQL test (non usare la 5432 per non confliggere con un postgres locale) |
-| `mailpit` | `1025` (SMTP) / `8025` (UI) | Catcher email — tutte le email inviate dal notifier finiscono qui |
+| `mailpit` | `1025` (SMTP) / `8025` (UI) | Catcher email — tutte le email inviate da backend e notifier finiscono qui |
+| `adminer` | `8080` | UI web per il database (client PostgreSQL) |
 
 ### Credenziali DB di test
 
@@ -70,6 +71,16 @@ Connessione diretta (es. con psql o TablePlus):
 postgresql://fn-test-user:test@localhost:5434/fn-test-db
 ```
 
+Oppure via **Adminer** (UI web) su `http://localhost:8080`. Adminer gira dentro la rete Docker, quindi usa l'hostname interno:
+
+| Campo | Valore |
+|-------|--------|
+| System | `PostgreSQL` |
+| Server | `db` |
+| User | `fn-test-user` |
+| Password | `test` |
+| Database | `fn-test-db` |
+
 ### Utente test precaricato
 
 | Campo | Valore |
@@ -82,15 +93,15 @@ postgresql://fn-test-user:test@localhost:5434/fn-test-db
 
 Il backend usa **Azure Communication Services** per inviare email (conferma registrazione, OTP reset password).
 
-In sviluppo `AZURE_EMAIL_CONNECTION_STRING` è vuota → le email non vengono inviate e gli endpoint che le richiedono restituiscono `500`, ma il **server non crasha**.
+In sviluppo `AZURE_EMAIL_CONNECTION_STRING` è vuota → il backend usa il fallback **SMTP verso MailPit** (`SMTP_HOST=mailpit` nel compose): le email (conferma registrazione, OTP reset) vengono **catturate**, non inviate realmente.
 
-Per testare i flussi email (registrazione, reset password) impostare una connection string reale nel compose:
+Per inviare email **reali** via Azure (invece di catturarle) impostare una connection string nel compose:
 
 ```yaml
 AZURE_EMAIL_CONNECTION_STRING: "endpoint=https://...;accesskey=..."
 ```
 
-Le email inviate dal **notifier** (notifiche giornaliere) vengono invece catturate da MailPit e sono visibili su `http://localhost:8025`.
+Tutte le email (backend + notifier) sono visibili nella UI MailPit su `http://localhost:8025`.
 
 ---
 
@@ -109,7 +120,8 @@ Il compose crea la rete `ferminotify-dev` (bridge). Frontend e notifier si aggan
 | `JWT_SECRET` | `dev-jwt-secret-not-for-production` | Cambiare in produzione |
 | `FRONTEND_ORIGIN` | `http://localhost:5173` | CORS origin consentita |
 | `NOTIFICATION_API_KEY` | `dev-broadcast-key` | Chiave per `POST /user/push/notify/broadcast` |
-| `AZURE_EMAIL_CONNECTION_STRING` | *(vuota)* | Lasciare vuota in dev |
+| `AZURE_EMAIL_CONNECTION_STRING` | *(vuota)* | Lasciare vuota in dev (→ fallback MailPit) |
+| `SMTP_HOST` | `mailpit` | Fallback SMTP dev: se Azure è vuoto, le email vanno qui |
 
 ---
 
