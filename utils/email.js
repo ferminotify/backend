@@ -36,6 +36,7 @@ export async function sendWelcomeEmail(email, { name, gender, unsubInfo }) {
 }
 
 import { EmailClient } from "@azure/communication-email";
+import nodemailer from "nodemailer";
 const connectionString = process.env.AZURE_EMAIL_CONNECTION_STRING;
 
 function getEmailClient() {
@@ -43,7 +44,39 @@ function getEmailClient() {
   return new EmailClient(connectionString);
 }
 
+// Dev/staging fallback: when Azure isn't configured but an SMTP host is
+// (e.g. Mailpit), deliver there so emails can be inspected rendered.
+const smtpHost = process.env.SMTP_HOST;
+const smtpPort = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 1025;
+
+let smtpTransport = null;
+function getSmtpTransport() {
+  if (!smtpTransport) {
+    smtpTransport = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: false,   // Mailpit speaks plain SMTP
+      ignoreTLS: true,
+    });
+  }
+  return smtpTransport;
+}
+
+async function sendViaSmtp(to, subject, html, plainText, headers = {}) {
+  const info = await getSmtpTransport().sendMail({
+    from: 'Fermi Notify <donotreply@fn.lkev.in>',
+    to,
+    subject,
+    html,
+    text: plainText,
+    headers,
+  });
+  log.info('Email delivered to SMTP catcher', { to, subject, messageId: info.messageId });
+  return { smtp: true, messageId: info.messageId };
+}
+
 export async function sendMail(to, subject, html, plainText, headers = {}) {
+  if (!connectionString && smtpHost) return sendViaSmtp(to, subject, html, plainText, headers);
   const POLLER_WAIT_TIME = 10;
   try {
 
@@ -117,6 +150,7 @@ export async function sendMail(to, subject, html, plainText, headers = {}) {
 // This is useful when the caller shouldn't be blocked by the long-running poller.
 export async function sendMailAsync(to, subject, html, plainText, headers = {}) {
   if (!connectionString) {
+    if (smtpHost) return sendViaSmtp(to, subject, html, plainText, headers);
     log.warn('No AZURE_EMAIL_CONNECTION_STRING — email skipped', { to, subject, plainText });
     return { skipped: true };
   }
