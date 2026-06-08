@@ -35,6 +35,15 @@ services:
     networks:
       - ferminotify-dev
 
+  # DB web UI — http://localhost:8080 (System: PostgreSQL, Server: db, User: fn-test-user, Pass: test, DB: fn-test-db)
+  adminer:
+    container_name: fn-adminer
+    image: adminer
+    ports:
+      - "8080:8080"
+    networks:
+      - ferminotify-dev
+
   backend:
     container_name: fn-backend
     image: ferminotify/dev-backend
