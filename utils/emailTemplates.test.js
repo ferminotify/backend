@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmationEmailHtml, confirmationEmailText, passwordResetEmailHtml, passwordResetEmailText } from './emailTemplates.js';
+import { confirmationEmailHtml, confirmationEmailText, passwordResetEmailHtml, passwordResetEmailText, welcomeEmailHtml, welcomeEmailText } from './emailTemplates.js';
 
 test('confirmation html embeds the confirm link (button + fallback)', () => {
   const html = confirmationEmailHtml({ safeName: 'Mario', gender: 'M', confirmLink: 'https://x/c/ABC' });
@@ -37,4 +37,16 @@ test('password reset text contains name and full code', () => {
   const txt = passwordResetEmailText({ name: 'Ada', code: 'AB12CD' });
   assert.match(txt, /Ciao Ada,/);
   assert.match(txt, /è: AB12CD\./);
+});
+
+test('welcome html: gender greeting + small footer + unsub link', () => {
+  const html = welcomeEmailHtml({ safeName: 'Ada', gender: 'F', unsubInfo: { id: 9, unsub_token: 'Z' }, email: 'a@b.it' });
+  assert.match(html, /Benvenuta a Fermi Notify!/);
+  assert.match(html, /Ciao Ada!/);
+  assert.match(html, /icon-allmuted\.png style=height:35px/);
+  assert.match(html, /id=9&token=Z&email=a@b\.it/);
+});
+
+test('welcome text contains name', () => {
+  assert.match(welcomeEmailText({ name: 'Ada' }), /Ciao Ada! Benvenuto/);
 });
