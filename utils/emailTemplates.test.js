@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { confirmationEmailHtml, confirmationEmailText } from './emailTemplates.js';
+import { confirmationEmailHtml, confirmationEmailText, passwordResetEmailHtml, passwordResetEmailText } from './emailTemplates.js';
 
 test('confirmation html embeds the confirm link (button + fallback)', () => {
   const html = confirmationEmailHtml({ safeName: 'Mario', gender: 'M', confirmLink: 'https://x/c/ABC' });
@@ -24,4 +24,17 @@ test('confirmation text contains name and link', () => {
   const txt = confirmationEmailText({ name: 'Ada', confirmLink: 'https://x/c/ABC' });
   assert.match(txt, /Ciao Ada!/);
   assert.match(txt, /https:\/\/x\/c\/ABC/);
+});
+
+test('password reset html renders each of the 6 code chars in its own cell', () => {
+  const html = passwordResetEmailHtml({ safeName: 'Ada', code: 'AB12CD', unsubInfo: { id: 7, unsub_token: 'T' }, email: 'a@b.it' });
+  for (const ch of 'AB12CD') assert.match(html, new RegExp(`font-size:24px>${ch}</h1>`));
+  assert.match(html, /icon-allmuted\.png" style=height:35px/); // footer small
+  assert.match(html, /id=7&token=T&email=a@b\.it/);
+});
+
+test('password reset text contains name and full code', () => {
+  const txt = passwordResetEmailText({ name: 'Ada', code: 'AB12CD' });
+  assert.match(txt, /Ciao Ada,/);
+  assert.match(txt, /è: AB12CD\./);
 });
