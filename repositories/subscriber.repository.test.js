@@ -71,3 +71,20 @@ test('verifyOTP: valid', async () => {
     const repo = new SubscriberRepository(fakePool([{ secret_temp: 'ABC', secret_temp_timestamp: now }]));
     assert.equal(await repo.verifyOTP('x@y.it', 'ABC'), 'OK');
 });
+
+test('setResetCode issues an UPDATE with code + email', async () => {
+    const pool = fakePool([]);
+    const repo = new SubscriberRepository(pool);
+    await repo.setResetCode('a@b.it', 'CODE12');
+    assert.match(pool.calls[0].text, /UPDATE subscribers/);
+    assert.match(pool.calls[0].text, /secret_temp_timestamp = CURRENT_TIMESTAMP/);
+    assert.deepEqual(pool.calls[0].params, ['CODE12', 'a@b.it']);
+});
+
+test('updatePassword sets password and clears the reset code', async () => {
+    const pool = fakePool([]);
+    const repo = new SubscriberRepository(pool);
+    await repo.updatePassword('a@b.it', 'HASH');
+    assert.match(pool.calls[0].text, /secret_temp = NULL/);
+    assert.deepEqual(pool.calls[0].params, ['HASH', 'a@b.it']);
+});

@@ -8,10 +8,11 @@ import dotenv from 'dotenv';
 import logger from '../utils/logger.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendMailAsync, sendWelcomeEmail } from '../utils/email.js';
-import { confirmationEmailHtml, confirmationEmailText, passwordResetEmailHtml, passwordResetEmailText } from '../utils/emailTemplates.js';
+import { confirmationEmailHtml, confirmationEmailText } from '../utils/emailTemplates.js';
 import { validate } from '../middleware/validate.js';
 import { registerSchema, loginSchema, requestResetSchema, otpSchema, newPasswordSchema } from '../validators/auth.schemas.js';
-import { API_URL, URL } from '../utils/config.js';
+import * as authService from '../services/auth.service.js';
+import { URL } from '../utils/config.js';
 import subscriberRepo from '../repositories/subscriber.repository.js';
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
@@ -292,39 +293,12 @@ router.post('/request-change-password', validate(requestResetSchema), async (req
     const { email } = req.body;
     log.info('POST /request-change-password', { email, ip: req.ip });
     try {
-        const user = await subscriberRepo.findByEmail(email);
-        if (!user) return res.status(404).json({ error: 'Email non registrata' });
-        const name = user.name || '';
-        if (!name) return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
-        const safeName = escapeHtml(name);
-
-        // Generate a 6-char uppercase code (A-Z0-9). Keep existing style.
-        const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-        try {
-            await pool.query(
-                `UPDATE subscribers SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP WHERE email = $2;`,
-                [randomCode, email]
-            );
-        } catch (err) {
-            log.error('ERR SET TEMP SECRET', { email, error: err.stack || err });
-            return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' });
+        const r = await authService.requestPasswordReset(email);
+        if (!r.ok) {
+            if (r.reason === 'not_found') return res.status(404).json({ error: 'Email non registrata' });
+            if (r.reason === 'email_failed') return res.status(500).json({ error: 'Si è verificato un errore nell\'invio dell\'email.' });
+            return res.status(500).json({ error: 'Si è verificato un errore. Riprova più tardi.' }); // no_name
         }
-
-        try {
-            await sendMailAsync(
-                email,
-                `Codice OTP [${randomCode}]`,
-                passwordResetEmailHtml({ safeName, code: randomCode, unsubInfo: { id: user.id, unsub_token: user.unsub_token }, email }),
-                passwordResetEmailText({ name, code: randomCode }),
-                {
-                    'List-Unsubscribe': `<mailto:unsubscribe@fn.lkev.in?subject=Unsubscribe%20%3A%28&id=${user.id}&token=${user.unsub_token}&email=${email}>, <${URL}/auth/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}>`
-                }
-            );
-        } catch (mailErr) {
-            log.error('ERR SEND RESET EMAIL', { email, error: mailErr.stack || mailErr });
-            return res.status(500).json({ error: 'Si è verificato un errore nell\'invio dell\'email.' });
-        }
-
         return res.status(200).json({ message: 'Ti abbiamo inviato un codice per reimpostare la password. Controlla anche lo SPAM.' });
     } catch (err) {
         log.error('Error in request-change-password', { email, error: err.stack || err });
@@ -335,7 +309,7 @@ router.post('/request-change-password', validate(requestResetSchema), async (req
 router.post('/otp-change-password', validate(otpSchema), async (req, res) => {
     const { email, otp } = req.body;
     try {
-        const valid = await subscriberRepo.verifyOTP(email, otp);
+        const valid = await authService.verifyResetOtp(email, otp);
 
         if (valid !== "OK") {
             return res.status(400).json({ error: valid });
@@ -351,17 +325,8 @@ router.post('/otp-change-password', validate(otpSchema), async (req, res) => {
 router.post('/new-change-password', validate(newPasswordSchema), async (req, res) => {
     const { email, otp, newPassword } = req.body;
     try {
-        const valid = await subscriberRepo.verifyOTP(email, otp);
-
-        if (valid !== "OK") {
-            return res.status(400).json({ error: valid });
-        }
-        
-        const hashed = await bcrypt.hash(newPassword, 10);
-        await pool.query(
-            `UPDATE subscribers SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL WHERE email = $2`,
-            [hashed, email]
-        );
+        const r = await authService.setNewPassword(email, otp, newPassword);
+        if (!r.ok) return res.status(400).json({ error: r.otpError });
 
         return res.status(200).json({ message: 'Password cambiata con successo' });
     } catch (err) {

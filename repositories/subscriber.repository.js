@@ -84,6 +84,26 @@ export class SubscriberRepository {
         if (secret_temp !== otp) return 'OTP non valido';
         return 'OK';
     }
+
+    /** Store a fresh password-reset code with the current timestamp. */
+    async setResetCode(email, code) {
+        return this.pool.query(
+            `UPDATE subscribers
+                SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP
+              WHERE email = $2`,
+            [code, email]
+        );
+    }
+
+    /** Set a new (hashed) password and clear any pending reset code. */
+    async updatePassword(email, hashedPassword) {
+        return this.pool.query(
+            `UPDATE subscribers
+                SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL
+              WHERE email = $2`,
+            [hashedPassword, email]
+        );
+    }
 }
 
 // Shared singleton bound to the app pool — import this in routes.
