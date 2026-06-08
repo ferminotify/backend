@@ -9,6 +9,8 @@ import logger from '../utils/logger.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendMailAsync, sendWelcomeEmail } from '../utils/email.js';
 import { confirmationEmailHtml, confirmationEmailText, passwordResetEmailHtml, passwordResetEmailText } from '../utils/emailTemplates.js';
+import { validate } from '../middleware/validate.js';
+import { registerSchema, loginSchema, requestResetSchema, otpSchema, newPasswordSchema } from '../validators/auth.schemas.js';
 import { API_URL, URL } from '../utils/config.js';
 import subscriberRepo from '../repositories/subscriber.repository.js';
 import crypto from 'crypto';
@@ -30,33 +32,11 @@ function escapeHtml(str) {
 }
 
 /* REGISTER */
-router.put('/register', async (req, res) => {
-    let { name, surname, email, password, password2, gender } = req.body;
+router.put('/register', validate(registerSchema), async (req, res) => {
+    const { name, surname, email, password, gender } = req.body;
 
-    log.info('PUT /register called', { email: email?.toLowerCase(), ip: req.ip });
+    log.info('PUT /register called', { email, ip: req.ip });
 
-    try {
-        // Validation
-        name = name.trim();
-        surname = surname.trim();
-        email = email.trim().toLowerCase();
-
-        if (!name || !surname || !email || !password || !password2 || !gender) return res.status(400).json({ error: 'Tutti i campi sono obbligatori!' });
-
-        if (password !== password2) return res.status(400).json({ error: 'Le password non corrispondono!' });
-        
-        if (password.length < 6) return res.status(400).json({ error: 'La password deve essere lunga almeno 6 caratteri!' });
-
-        if (!['M', 'F', 'X'].includes(gender)) return res.status(400).json({ error: 'Genere non valido!' });
-
-        // basic email regex validation, checks for presence of "@" and "."
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) return res.status(400).json({ error: 'Email non valida!' });
-
-    } catch (err) {
-        log.error('Validation error during register', { error: err.stack || err });
-        return res.status(500).json({ error: 'Errore interno!' });
-    }
     // If email already exists: if confirmed (notifications > -1) => error, else resend confirmation email and return 200
     try {
         const existing = await pool.query(
@@ -182,9 +162,8 @@ router.get('/register/confirmation/:code', async (req, res) => {
 });
 
 /* LOGIN */
-router.post('/login', async (req, res) => {
-    let { email, password } = req.body;
-    email = email.trim().toLowerCase();
+router.post('/login', validate(loginSchema), async (req, res) => {
+    const { email, password } = req.body;
 
     try {
     const result = await pool.query('SELECT * FROM subscribers WHERE email = $1', [email]);
@@ -309,10 +288,8 @@ router.post('/logout', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/request-change-password', async (req, res) => {
-    let { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email non fornita' });
-    email = email.trim().toLowerCase();
+router.post('/request-change-password', validate(requestResetSchema), async (req, res) => {
+    const { email } = req.body;
     log.info('POST /request-change-password', { email, ip: req.ip });
     try {
         const user = await subscriberRepo.findByEmail(email);
@@ -355,11 +332,8 @@ router.post('/request-change-password', async (req, res) => {
     }
 });
 
-router.post('/otp-change-password', async (req, res) => {
-    let { email, otp } = req.body;
-    if (!email || !otp) return res.status(400).json({ error: 'Email o codice OTP non forniti' });
-    email = email.trim().toLowerCase();
-    otp = otp.trim().toUpperCase();
+router.post('/otp-change-password', validate(otpSchema), async (req, res) => {
+    const { email, otp } = req.body;
     try {
         const valid = await subscriberRepo.verifyOTP(email, otp);
 
@@ -374,19 +348,8 @@ router.post('/otp-change-password', async (req, res) => {
     }
 });
 
-router.post('/new-change-password', async (req, res) => {
-    let { email, otp, newPassword, newPassword2 } = req.body;
-    if (!email || !otp || !newPassword || !newPassword2)
-        return res.status(400).json({ error: 'Dati mancanti' });
-    email = email.trim().toLowerCase();
-    otp = otp.trim().toUpperCase();
-
-    if (newPassword !== newPassword2)
-        return res.status(400).json({ error: 'Le password non corrispondono' });
-    
-    if (newPassword.length < 6)
-        return res.status(400).json({ error: 'La password deve essere lunga almeno 6 caratteri' });
-    
+router.post('/new-change-password', validate(newPasswordSchema), async (req, res) => {
+    const { email, otp, newPassword } = req.body;
     try {
         const valid = await subscriberRepo.verifyOTP(email, otp);
 
