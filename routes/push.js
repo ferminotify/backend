@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "crypto";
 import webpush from "web-push";
 import dotenv from "dotenv";
 import logger from '../utils/logger.js';
@@ -18,6 +19,22 @@ if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
   log.warn('Missing VAPID keys. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.');
 } else {
   webpush.setVapidDetails("mailto:mail@fn.lkev.in", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+}
+
+if (!NOTIFICATION_API_KEY) {
+  log.warn('Missing NOTIFICATION_API_KEY. /notify and /notify/broadcast will reject all requests.');
+}
+
+// Middleware: only the notifier service (holding NOTIFICATION_API_KEY) may send arbitrary pushes
+function requireNotificationKey(req, res, next) {
+  const authHeader = req.headers['authorization'] || '';
+  const expected = Buffer.from(`Bearer ${NOTIFICATION_API_KEY}`);
+  const received = Buffer.from(authHeader);
+  const valid = NOTIFICATION_API_KEY
+    && received.length === expected.length
+    && crypto.timingSafeEqual(received, expected);
+  if (!valid) return res.status(401).json({ ok: false, error: "Unauthorized" });
+  next();
 }
 
 // In-memory subscription store (replace with persistent DB later)
@@ -131,7 +148,7 @@ router.post("/subscribe", authenticateToken, async (req, res) => {
       res.status(201).json({ ok: true, updated });
     });
 
-router.post("/notify", async (req, res) => {
+router.post("/notify", requireNotificationKey, async (req, res) => {
   const { title, body, url, endpoint } = req.body || {};
   if (!endpoint) {
     return res.status(400).json({ ok: false, error: "Missing endpoint in payload" });
@@ -178,11 +195,7 @@ router.post("/notify", async (req, res) => {
   }
 });
 
-router.post("/notify/broadcast", async (req, res) => {
-
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || authHeader !== `Bearer ${NOTIFICATION_API_KEY}`) return res.status(401).json({ ok: false, error: "Unauthorized" });
-
+router.post("/notify/broadcast", requireNotificationKey, async (req, res) => {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ ok: false, error: "VAPID keys not configured" });
 
   const { title, body, url } = req.body || {};
@@ -320,6 +333,60 @@ router.delete("/devices/:device_id", authenticateToken, async (req, res) => {
     } catch (err) {
     log.error('DB error deleting device for user', { userId, error: err.stack || err });
     return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+});
+
+/* SEND TEST PUSH TO ONE OF THE USER'S DEVICES */
+const TEST_PUSH_COOLDOWN_MS = 30 * 1000;
+const lastTestPush = new Map(); // key: `${userId}:${deviceId}` --> timestamp
+
+router.post("/devices/:device_id/test", authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const deviceId = req.params.device_id;
+
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return res.status(503).json({ ok: false, error: "Notifiche push non configurate sul server." });
+
+  const key = `${userId}:${deviceId}`;
+  const elapsed = Date.now() - (lastTestPush.get(key) || 0);
+  if (elapsed < TEST_PUSH_COOLDOWN_MS) {
+    const retryAfter = Math.ceil((TEST_PUSH_COOLDOWN_MS - elapsed) / 1000);
+    return res.status(429).json({ ok: false, error: `Attendi ${retryAfter}s prima di inviare un'altra notifica di prova.` });
+  }
+
+  let sub;
+  try {
+    const result = await pool.query(
+      `SELECT endpoint, p256dh, auth FROM push WHERE sub_id = $1 AND device_id = $2`,
+      [userId, deviceId]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ ok: false, error: "Dispositivo non trovato." });
+    const row = result.rows[0];
+    sub = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
+  } catch (err) {
+    log.error('DB error fetching device for test push', { userId, error: err.stack || err });
+    return res.status(500).json({ ok: false, error: "Errore interno. Riprova più tardi." });
+  }
+
+  lastTestPush.set(key, Date.now());
+
+  const payload = buildPayload(
+    "Fermi Notify · Notifica di prova",
+    "Se leggi questo messaggio, le notifiche push funzionano correttamente su questo dispositivo.",
+    "/dashboard"
+  );
+
+  try {
+    await webpush.sendNotification(sub, payload);
+    log.info('Sent test push notification', { userId, deviceId });
+    return res.json({ ok: true });
+  } catch (err) {
+    const status = err?.statusCode;
+    log.error('Test push failed', { status, userId, deviceId, error: err.stack || err });
+    if (status === 404 || status === 410 || status === 403) {
+      await removeSubscription(sub.endpoint, status === 403 ? 'key mismatch' : 'stale');
+      return res.status(410).json({ ok: false, removed: true, error: "Iscrizione push non più valida: dispositivo rimosso. Riattiva le notifiche push." });
+    }
+    return res.status(500).json({ ok: false, error: "Errore interno durante l'invio della notifica." });
   }
 });
 
