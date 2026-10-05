@@ -7,6 +7,7 @@ import googleRouter from './routes/google.js';
 import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
 import mediaRouter from './routes/media.js';
+import timetableRouter from './routes/timetable.js';
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
@@ -59,6 +60,8 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/timetable', timetableRouter);
 
 app.use('/user/auth/google', googleRouter);
 
