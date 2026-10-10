@@ -1,9 +1,12 @@
 // School timetable source: https://www.fermimn.edu.it/orario/
 // The site renders one HTML table per class (?class=<id>) or room (?room=<id>);
 // there is no API and no CORS, so the backend fetches and converts it to JSON.
+// Logged in (see schoolSession.js) the site also lists teachers (?teacher=<id>) and adds
+// a last line with the teachers to every cell.
 import logger from '../logger.js';
 import { createCache } from './cache.js';
 import { entityKey } from './normalize.js';
+import { fetchAuthed } from './schoolSession.js';
 
 const log = logger.child('timetable:school');
 
@@ -11,12 +14,14 @@ const BASE_URL = process.env.TIMETABLE_URL || 'https://www.fermimn.edu.it/orario
 const TTL_MS = Number(process.env.TIMETABLE_TTL_MS) || 6 * 60 * 60 * 1000;
 const USER_AGENT = 'FermiNotify/1.0 (+https://fn.lkev.in)';
 
+// Public types; 'teacher' exists only on the logged-in site.
 export const ENTITY_TYPES = ['class', 'room'];
+export const ALL_TYPES = [...ENTITY_TYPES, 'teacher'];
 
 const WEEKDAYS = ['lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
 
-const indexCache = createCache({ ttlMs: TTL_MS, maxEntries: 1 });
-const tableCache = createCache({ ttlMs: TTL_MS, maxEntries: 300 });
+const indexCache = createCache({ ttlMs: TTL_MS, maxEntries: 2 });
+const tableCache = createCache({ ttlMs: TTL_MS, maxEntries: 800 });
 
 const decodeEntities = (s) =>
   String(s)
@@ -31,8 +36,28 @@ const decodeEntities = (s) =>
 
 const textOf = (html) => decodeEntities(String(html).replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
 
-async function fetchPage(query = '') {
+/**
+ * Entries of a cell line, one per <br>. The site wraps long names with "<br> " (a space
+ * after the break): "DEL PROPOSTO<br> LUIGINO GIOVANNI" is one teacher, while
+ * "Aula 619 Disegno B<br>Lab 609 CAD" are two rooms.
+ */
+export function brEntries(html) {
+  const out = [];
+  for (const part of String(html).split(/<br\s*\/?>/i)) {
+    const text = textOf(part);
+    if (!text) continue;
+    if (/^\s/.test(part) && out.length) out[out.length - 1] += ` ${text}`;
+    else out.push(text);
+  }
+  return out;
+}
+
+const titleCase = (s) => s.toLowerCase().replace(/(^|[\s'(.-])(\p{L})/gu, (_, sep, ch) => sep + ch.toUpperCase());
+
+// `session`: a user's school session (see schoolSession.js); default: the service account.
+async function fetchPage(query = '', { authed = false, session } = {}) {
   const url = BASE_URL + query;
+  if (authed) return fetchAuthed(url, { session });
   const res = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT },
     signal: AbortSignal.timeout(15000),
@@ -47,12 +72,13 @@ async function fetchPage(query = '') {
  */
 export function parseIndex(html) {
   const index = {};
-  for (const type of ENTITY_TYPES) {
+  for (const type of ALL_TYPES) {
     const select = html.match(new RegExp(`<select[^>]*name="${type}"[^>]*>([\\s\\S]*?)</select>`));
     const options = select ? [...select[1].matchAll(/<option[^>]*value="([^"]*)"[^>]*>([^<]*)/g)] : [];
     index[type] = options
       .map(([, id, label]) => ({ id, name: textOf(label) }))
       .filter((o) => o.id && o.name)
+      .map((o) => ({ ...o, name: type === 'teacher' ? titleCase(o.name) : o.name }))
       .map((o) => ({ ...o, key: entityKey(o.name) }));
   }
   return index;
@@ -62,13 +88,20 @@ export function parseIndex(html) {
  * Converts the timetable <table> into explicit lessons, resolving rowspans.
  * Rows (times) and columns (weekdays) vary per entity, so both come from the headers.
  *
+ * Cell lines: class view [subject, room], room view [subject, class],
+ * teacher view [subject, room, class]; logged in, a last line lists the teachers.
+ *
+ * @param {object} [opts]
+ * @param {'class'|'room'|'teacher'} [opts.type]
+ * @param {boolean} [opts.withTeachers]  page fetched logged in
  * @returns {{ times: string[], weekdays: number[], lessons: Array<{
- *   weekday: number, start: string, span: number, subject: string, detail: string, color: string|null
+ *   weekday: number, start: string, span: number, subject: string, detail: string,
+ *   room: string|null, className: string|null, teachers: string[], color: string|null
  * }> }}
- *   weekday is ISO (1 = Monday). `detail` is the second line of the cell: the room in a
- *   class timetable, the class in a room timetable.
+ *   weekday is ISO (1 = Monday). `detail` is what the cell shows under the subject: the room
+ *   (class view), the class (room view), "class · room" (teacher view).
  */
-export function parseTable(html) {
+export function parseTable(html, { type = 'class', withTeachers = false } = {}) {
   const tableMatch = html.match(/<table[\s\S]*?<\/table>/);
   if (!tableMatch) return { times: [], weekdays: [], lessons: [] };
   const table = tableMatch[0];
@@ -104,14 +137,28 @@ export function parseTable(html) {
       const span = Number(attrs.match(/rowspan="(\d+)"/)?.[1] || 1);
       covered[col] = span - 1;
 
-      const lines = [...inner.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)].map(([, p]) => textOf(p)).filter(Boolean);
-      if (!lines.length) continue; // free hour
+      const raw = [...inner.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/g)].map(([, p]) => p);
+      if (!raw.some((p) => textOf(p))) continue; // free hour
+      const baseCount = type === 'teacher' ? 3 : 2;
+      // Teachers: last line, one per <br>. Only when the cell has more lines than the public one.
+      const teachers =
+        withTeachers && raw.length > baseCount
+          ? brEntries(raw.pop()).map(titleCase)
+          : [];
+      // Several rooms/classes in one line: "Aula 619 Disegno B, Lab 609 CAD".
+      const lines = raw.map((p) => brEntries(p).join(', '));
+      const [subject, second = '', third = ''] = lines;
+      const room = type === 'room' ? null : second || null;
+      const className = type === 'class' ? null : (type === 'teacher' ? third : second) || null;
       lessons.push({
         weekday: weekdays[col],
         start: times[times.length - 1],
         span,
-        subject: lines[0],
-        detail: lines.slice(1).join(' · '),
+        subject,
+        detail: type === 'teacher' ? [className, room].filter(Boolean).join(' · ') : lines.slice(1).filter(Boolean).join(' · '),
+        room,
+        className,
+        teachers,
         color: attrs.match(/background-color:\s*(#[0-9a-f]{3,8})/i)?.[1] || null,
       });
     }
@@ -126,27 +173,39 @@ export function parseTable(html) {
   return { times, weekdays, lessons };
 }
 
-export async function getIndex() {
-  const { value, stale } = await indexCache.get('index', async () => {
-    log.info('Fetching timetable index');
-    return parseIndex(await fetchPage());
+/**
+ * Classes and rooms (public page), plus teachers when `authed` (logged-in page).
+ * @returns {{ class, room, teacher? }}
+ */
+// Logged-in pages are the same for every account that can see them, so the cache is
+// shared: whichever session misses first fetches for everybody.
+export async function getIndex({ authed = false, session } = {}) {
+  const { value, stale } = await indexCache.get(authed ? 'authed' : 'public', async () => {
+    log.info('Fetching timetable index', { authed });
+    return parseIndex(await fetchPage('', { authed, session }));
   });
-  if (stale) log.warn('Serving stale timetable index');
+  if (stale) log.warn('Serving stale timetable index', { authed });
   return value;
 }
 
-/** Finds a class/room by key ("3AIIN"), id or exact name. */
-export async function findEntity(type, ref) {
-  if (!ENTITY_TYPES.includes(type)) return null;
-  const index = await getIndex();
-  const key = entityKey(ref);
-  return index[type].find((e) => e.key === key || e.id === String(ref)) || null;
+/** Whether this school session sees the teachers' timetable (fresh fetch, no cache). */
+export async function sessionSeesTeachers(session) {
+  return parseIndex(await fetchPage('', { authed: true, session })).teacher.length > 0;
 }
 
-export async function getTable(type, id) {
-  const { value, stale } = await tableCache.get(`${type}:${id}`, async () => {
-    log.info('Fetching timetable', { type, id });
-    return parseTable(await fetchPage(`?${type}=${encodeURIComponent(id)}`));
+/** Finds a class/room/teacher by key ("3AIIN"), id or exact name. Teachers need `authed`. */
+export async function findEntity(type, ref, { authed = false, session } = {}) {
+  if (!(authed ? ALL_TYPES : ENTITY_TYPES).includes(type)) return null;
+  const index = await getIndex({ authed: authed || type === 'teacher', session });
+  const key = entityKey(ref);
+  return index[type]?.find((e) => e.key === key || e.id === String(ref)) || null;
+}
+
+/** Timetable of one entity. `authed` fetches the logged-in page, which adds teachers. */
+export async function getTable(type, id, { authed = false, session } = {}) {
+  const { value, stale } = await tableCache.get(`${authed ? 'a' : 'p'}:${type}:${id}`, async () => {
+    log.info('Fetching timetable', { type, id, authed });
+    return parseTable(await fetchPage(`?${type}=${encodeURIComponent(id)}`, { authed, session }), { type, withTeachers: authed });
   });
   return { table: value, stale };
 }

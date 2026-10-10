@@ -1,0 +1,52 @@
+// "Accedi con Moodle": a user's own session on fermimn.edu.it, handed to the browser as an
+// opaque ticket (AES-256-GCM, so the client can neither read nor forge it). Stateless:
+// survives restarts, nothing stored server side. The password never gets here.
+import crypto from 'node:crypto';
+
+// Django's session cookie lives 14 days; stop a bit earlier.
+export const TICKET_TTL_MS = 13 * 24 * 60 * 60 * 1000;
+
+const key = () =>
+  crypto
+    .createHash('sha256')
+    .update(`school-ticket:${process.env.SCHOOL_TICKET_SECRET || process.env.JWT_SECRET}`)
+    .digest();
+
+/** @param {{ sessionid: string, csrftoken?: string }} session */
+export function sealTicket(session, now = Date.now()) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key(), iv);
+  const body = JSON.stringify({ s: session.sessionid, c: session.csrftoken, e: now + TICKET_TTL_MS });
+  const data = Buffer.concat([cipher.update(body, 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64url');
+}
+
+/** The session in the ticket, or null if the ticket is invalid or expired. */
+export function openTicket(ticket, now = Date.now()) {
+  try {
+    const raw = Buffer.from(String(ticket), 'base64url');
+    if (raw.length < 29) return null;
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key(), raw.subarray(0, 12));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    const body = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8'));
+    if (!body.s || !(body.e > now)) return null;
+    return { sessionid: body.s, ...(body.c ? { csrftoken: body.c } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sets req.schoolSession from the X-School-Ticket header. A bad or expired ticket is
+ * rejected (401, code "school_ticket_invalid") so the client drops it.
+ */
+export function optionalSchoolTicket(req, res, next) {
+  req.schoolSession = null;
+  const ticket = req.headers['x-school-ticket'];
+  if (!ticket) return next();
+  req.schoolSession = openTicket(ticket);
+  if (!req.schoolSession) {
+    return res.status(401).json({ error: 'Sessione Moodle scaduta', code: 'school_ticket_invalid' });
+  }
+  next();
+}

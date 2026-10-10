@@ -1,5 +1,5 @@
 // Applies calendar variations to a weekly timetable for one class or room.
-import { entityKey, roomNumber, toMinutes } from './normalize.js';
+import { entityKey, sameClassKey, sameRoom, toMinutes } from './normalize.js';
 
 // Daytime lesson start times. Evening classes add their own (18:15, 19:05, …) from the
 // timetable itself. The calendar uses round hours (08:00, 09:00, …); an event time snaps
@@ -28,17 +28,44 @@ export function variationSlots(v, slots = SCHOOL_SLOTS) {
 
 const CANCELLING = new Set(['entry', 'exit', 'trip']);
 
-/** Does this variation concern the class? "1QIN" also covers "1QIN gruppo 1/2". */
-function concernsClass(v, classKey) {
-  return v.classes.some((c) => c === classKey || classKey.startsWith(`${c}GRUPPO`));
+/** Does this variation concern the class? "1QIN" also covers "1QIN gruppo 1/2" (see sameClassKey). */
+export function concernsClass(v, classKey) {
+  return v.classes.some((c) => sameClassKey(c, classKey));
 }
 
-function concernsRoom(v, room) {
-  if (!v.room) return false;
-  const num = roomNumber(room.name);
-  if (v.roomNumber && num) return v.roomNumber === num;
-  return entityKey(v.room) === room.key;
+export function concernsRoom(v, room) {
+  return Boolean(v.room) && sameRoom(v.room, room.name);
 }
+
+// Teacher names, word by word: "Del Modello" → ["DEL", "MODELLO"], "Cracò" → ["CRACO"].
+const nameWords = (s) =>
+  String(s || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/\s+/)
+    .map((w) => w.replace(/[^A-Z0-9]/g, ''))
+    .filter(Boolean);
+
+/**
+ * Is the teacher (full name from the school site, "Bottazzi Stefano") among the names of an
+ * event, which usually carry the surname only ("Bottazzi")? Whole words only, so "Rossi"
+ * does not match "Rossini". Two teachers sharing a surname both match: the calendar
+ * gives no way to tell them apart.
+ */
+export function mentionsTeacher(names, fullName) {
+  const full = nameWords(fullName);
+  return (names || []).some((n) => {
+    const w = nameWords(n);
+    if (!w.length || w.length > full.length) return false;
+    const prefix = w.every((x, i) => x === full[i]); // "Bottazzi" / "Bottazzi Stefano"
+    const suffix = w.every((x, i) => x === full[full.length - w.length + i]); // "Stefano Bottazzi" written reversed
+    return prefix || (w.length > 1 && suffix) || (w.length === full.length && w.every((x) => full.includes(x)));
+  });
+}
+
+// Room view: the detail line holds the class(es), "3AIIN" or "1A, 2A" when shared.
+const detailClasses = (detail) => String(detail || '').split(', ').map(entityKey);
 
 const publicVariation = (v) => ({
   uid: v.uid,
@@ -46,16 +73,23 @@ const publicVariation = (v) => ({
   label: v.label,
   summary: v.summary,
   classes: v.classes,
+  group: v.group || null,
   room: v.room,
   teachers: v.teachers,
   absent: v.absent,
   start: v.start,
   end: v.end,
+  // How sure the reading is (0–100) and whether the AI read it (see confidence.js, ai.js)
+  confidence: v.reading ? v.reading.score : null,
+  ai: Boolean(v.reading?.ai),
+  check: v.reading?.check
+    ? { state: v.reading.check.state, confidence: v.reading.check.confidence ?? null, diffs: v.reading.check.diffs || [] }
+    : null,
 });
 
 /**
  * @param {object} p
- * @param {{type:'class'|'room', key:string, name:string}} p.entity
+ * @param {{type:'class'|'room'|'teacher', key:string, name:string}} p.entity
  * @param {{times:string[], weekdays:number[], lessons:Array}} p.table   from parseTable()
  * @param {Array} p.variations   parsed variations (any date / entity; filtered here)
  * @param {Array<{date:string, weekday:number, published:boolean}>} p.days
@@ -70,12 +104,13 @@ export function buildWeek({ entity, table, variations, days }) {
     const units = new Map(); // slot -> unit
     table.lessons
       .filter((l) => l.weekday === weekday)
-      .forEach((l, n) => {
+      .forEach((l) => {
         for (const slot of l.slots) {
           units.set(slot, {
-            lessonId: `${weekday}-${l.start}-${n}`,
             subject: l.subject,
             detail: l.detail,
+            className: l.className || null,
+            teachers: l.teachers || [],
             color: l.color,
             status: 'regular',
             variations: [],
@@ -95,7 +130,7 @@ export function buildWeek({ entity, table, variations, days }) {
     const touch = (slot, v, status, extra = {}) => {
       let unit = units.get(slot);
       if (!unit) {
-        unit = { lessonId: null, subject: null, detail: null, color: null, status: 'added', variations: [] };
+        unit = { subject: null, detail: null, className: null, teachers: [], color: null, status: 'added', variations: [] };
         units.set(slot, unit);
         Object.assign(unit, extra);
       } else if (rank(status, extra.occupant) > rank(unit.status, unit.occupant)) {
@@ -123,6 +158,31 @@ export function buildWeek({ entity, table, variations, days }) {
         continue;
       }
 
+      if (entity.type === 'teacher') {
+        const absent = mentionsTeacher(v.absent, entity.name);
+        const named = !absent && mentionsTeacher(v.teachers, entity.name);
+        if (!slots.length) {
+          if (absent || named) notes.push(publicVariation(v));
+          continue;
+        }
+        for (const slot of slots) {
+          const base = units.get(slot);
+          const sameClass = base?.className && concernsClass(v, entityKey(base.className));
+          if (absent) {
+            // The teacher is away: their lessons are not held (by them).
+            if (base) touch(slot, v, 'cancelled');
+          } else if (named) {
+            // Substitution, room change or trip duty: the teacher is busy with the event's class.
+            const occupant = v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0];
+            touch(slot, v, 'changed', base && sameClass ? {} : { occupant });
+          } else if (sameClass) {
+            // The class itself changes: gone (entry/exit/trip) → lesson not held; else show the change.
+            touch(slot, v, CANCELLING.has(v.kind) ? 'cancelled' : 'changed');
+          }
+        }
+        continue;
+      }
+
       // Room view.
       if (concernsRoom(v, entity) && !CANCELLING.has(v.kind)) {
         if (!slots.length) {
@@ -133,7 +193,7 @@ export function buildWeek({ entity, table, variations, days }) {
         const occupant = v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0];
         for (const slot of slots) {
           const base = units.get(slot);
-          const sameClass = base && v.classes.some((c) => entityKey(base.detail) === c);
+          const sameClass = base && detailClasses(base.detail).some((k) => concernsClass(v, k));
           touch(slot, v, 'changed', base && sameClass ? {} : { occupant });
         }
         continue;
@@ -143,20 +203,25 @@ export function buildWeek({ entity, table, variations, days }) {
         for (const slot of slots) {
           const base = units.get(slot);
           if (!base || base.status === 'added') continue;
-          if (!v.classes.some((c) => entityKey(base.detail) === c || entityKey(base.detail).startsWith(`${c}GRUPPO`))) continue;
+          const here = detailClasses(base.detail);
+          if (!here.some((k) => concernsClass(v, k))) continue;
           const movesAway = CANCELLING.has(v.kind) || (v.room && !concernsRoom(v, entity));
           if (movesAway) touch(slot, v, 'freed');
         }
       }
     }
 
-    // 3. Collapse consecutive slots of the same lesson with the same outcome back into one cell.
+    // 3. Collapse consecutive slots of the same lesson with the same outcome into one cell.
+    // "Same lesson" = same subject, detail (room/class) and teachers: the school site often
+    // lists a double period as two separate one-hour lessons, which should still read as one
+    // block. A co-teacher (ITP) present for one of the hours only splits it, so each block
+    // tells exactly who is there.
     const cells = [];
     const visible = allSlots.filter((s) => units.has(s) || timesInUse.has(s));
     for (const slot of allSlots) {
       const unit = units.get(slot);
       if (!unit) continue;
-      const sig = `${unit.lessonId}|${unit.status}|${unit.occupant || ''}|${unit.variations.map((v) => v.summary).join('\n')}`;
+      const sig = `${unit.subject}|${unit.detail}|${[...unit.teachers].sort().join(',')}|${unit.status}|${unit.occupant || ''}|${unit.variations.map((v) => v.summary).join('\n')}`;
       const prev = cells[cells.length - 1];
       // Only merge with the cell directly above in the rendered grid.
       const contiguous = prev && visible.indexOf(slot) === visible.indexOf(prev.slots[prev.slots.length - 1]) + 1;
@@ -170,6 +235,7 @@ export function buildWeek({ entity, table, variations, days }) {
         slots: [slot],
         subject: unit.subject,
         detail: unit.detail,
+        teachers: [...unit.teachers],
         color: unit.color,
         status: unit.status,
         occupant: unit.occupant || null,
