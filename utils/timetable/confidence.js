@@ -1,10 +1,11 @@
 // How sure we are that an event title was read right: 0–100.
 // Starts from 100; each problem found takes points off. A well-formed title whose classes
 // and rooms all exist on the school timetable stays at 100.
-import { kindHasTypo, matchKind, ROOM_RE } from './variations.js';
+import { GROUP_SEGMENT, INITIAL_NAME, kindHasTypo, matchKind, PROF_START, ROOM_RE, splitSegments } from './variations.js';
 import { entityKey, sameClassKey, sameRoom } from './normalize.js';
 
-export const AI_THRESHOLD = Number(process.env.AI_CONFIDENCE_THRESHOLD) || 60;
+// Below this score the timetable flags the reading as uncertain.
+export const UNCERTAIN_BELOW = 60;
 
 // Places named by the calendar that are not on the timetable site: not an error.
 const KNOWN_PLACES = /\b(MENSA|AULA MAGNA|BIBLIOTECA|AUDITORIUM|CORTILE|PALESTRA|PALAZZETTO|TEATRO)\b/;
@@ -22,19 +23,22 @@ export function assessSummary(summary, parsed, index = {}) {
   const issues = [];
   const add = (code, text, penalty) => issues.push({ code, text, penalty });
   const upper = summary.toUpperCase().replace(/\s+/g, ' ').trim();
-  const segments = upper.split(/\s+-\s*|\s*-\s+/);
-  const head = /^CLASS[EI]\s/.test(segments[0]);
+  const segments = splitSegments(upper);
+  // A CLASSE segment anywhere ("ALUNNO B. F. CLASSE 3CIIN", "AULA 620 - CLASSE 1AME")
+  const head = segments.some((seg) => /^(?:ALUNN\w*\b.*?\s)?CLASS[EI]\s/.test(seg));
   const classKeys = (index.classes || []).map((c) => c.key);
 
   // A class written without "CLASSE": the parser reads no class at all.
-  if (!head && !parsed.classes.length && CLASS_TOKEN.test(upper.replace(/\([^)]*\)|\b(AULA|LAB\w*|SALA)\s+\S+/g, ''))) {
+  const levels = parsed.levels || [];
+  if (!head && !parsed.classes.length && !levels.length && CLASS_TOKEN.test(upper.replace(/\([^)]*\)|\b(AULA|LAB\w*|SALA)\s+\S+/g, ''))) {
     add('class_no_prefix', 'Sembra nominare una classe ma non inizia con “CLASSE”/“CLASSI”', 50);
   }
   // Nothing else the timetable can use: an unrelated event (meeting, course).
-  if (!parsed.classes.length && !parsed.room && !parsed.teachers.length && !parsed.absent.length) return finish(issues);
+  if (!parsed.classes.length && !levels.length && !parsed.room && !parsed.teachers.length && !parsed.absent.length) return finish(issues);
 
   // Classes
-  if (head && !parsed.classes.length) add('class_unreadable', 'Dopo “CLASSE” non c’è un nome di classe valido', 45);
+  if (levels.some((l) => l.track === 'other')) add('level_track', 'Anni di un indirizzo non riconosciuto (es. “TERZE MECCANICA”): non applicato alle classi', 30);
+  if (head && !parsed.classes.length && !levels.length) add('class_unreadable', 'Dopo “CLASSE” non c’è un nome di classe valido', 45);
   for (const c of parsed.classes) {
     if (!classKeys.length) break;
     const matched = classKeys.filter((k) => sameClassKey(c, k));
@@ -58,13 +62,14 @@ export function assessSummary(summary, parsed, index = {}) {
   // Separators
   if (/\S-\s|\s-\S/.test(upper.replace(/\b\d+-\d+\b/g, ''))) add('loose_dash', 'Trattino senza spazio da un lato', 5);
 
-  // Segments we do not understand ("CLASSE 3A - AULA 46 - BLA BLA")
+  // Free-text segments: the first one is the activity ("PROVA RECUPERO STORIA"); more than
+  // one is unusual ("CLASSE 3A - AULA 46 - BLA - BLA").
   let unknown = 0;
-  for (const seg of segments.slice(1)) {
+  for (const seg of segments) {
     const s = seg.replace(/\([^)]*\)/g, '').trim();
-    if (!s || ROOM_RE.test(s) || /^PROF/.test(s) || matchKind(s) || /^(ORE|DALLE|ALLE)\b/.test(s)) continue;
+    if (!s || /\bCLASS[EI]\s/.test(s) || ROOM_RE.test(s) || /^(PROF|REF\b|ANNULLAT|TUTOR\b)/.test(s) || PROF_START.test(s) || GROUP_SEGMENT.test(s) || INITIAL_NAME.test(s) || matchKind(s) || /^(ORE|DALLE|ALLE)\b/.test(s)) continue;
     unknown += 1;
-    if (unknown <= 2) add('unknown_part', `Parte non riconosciuta: “${s}”`, 15);
+    if (unknown >= 2 && unknown <= 3) add('unknown_part', `Parte non riconosciuta: “${s}”`, 10);
   }
 
   // Teachers

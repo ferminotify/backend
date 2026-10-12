@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { brEntries, parseIndex, parseTable } from '../utils/timetable/school.js';
 import { parseEventsCsv, parseSummary } from '../utils/timetable/variations.js';
-import { buildWeek, mentionsTeacher, variationSlots } from '../utils/timetable/merge.js';
+import { buildWeek, mentionsClassText, mentionsTeacherTypo, nearClassText, teacherContext, mentionsRoomText, mentionsTeacher, mentionsTeacherText, namesTeacherBare, variationSlots } from '../utils/timetable/merge.js';
 import { entityKey, sameClassKey, sameRoom } from '../utils/timetable/normalize.js';
 import { weekStart, variationsWindow } from '../utils/timetable/index.js';
 import { sealTicket, openTicket, TICKET_TTL_MS } from '../utils/schoolTicket.js';
@@ -67,7 +67,10 @@ test('parseSummary: substitution with absent teacher', () => {
       label: null,
       room: 'Aula 46',
       roomNumber: '46',
+      levels: [],
       group: null,
+      activity: null,
+      cancelled: false,
       teachers: ['Esempio', 'Prova', 'Campione'],
       absent: ['Del Modello'],
     }
@@ -214,6 +217,14 @@ test('buildWeek: late entry cancels earlier lessons, early exit later ones', () 
   assert.equal(status['12:05'], 'cancelled');
 });
 
+test('buildWeek: a suspended lesson cancels its hours only', () => {
+  const variations = [ev('s', 'CLASSE 1A - LEZIONE DI MATEMATICA SOSPESA', '09:00', '10:00')];
+  const { days } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
+  assert.equal(cellAt(days[0], '08:05')?.status, 'regular');
+  assert.equal(cellAt(days[0], '09:00')?.status, 'cancelled');
+  assert.equal(cellAt(days[0], '10:05')?.status, 'regular');
+});
+
 test('buildWeek: other classes and other days are ignored; unmapped events become notes', () => {
   const variations = [
     ev('o', 'CLASSE 2A - AULA 46 - PROF. ESEMPIO', '08:00', '09:00'),
@@ -263,14 +274,28 @@ test('buildWeek (room): class moving out frees the room, class moving in occupie
   assert.equal(nine.variations.length, 2);
 });
 
+test('buildWeek (room): absent teacher in the usual room + new room → freed, moved to the new one', () => {
+  const room = { type: 'room', key: entityKey('Aula 94'), name: 'Aula 94' };
+  const table = { times: ['08:05'], weekdays: [1], lessons: [{ weekday: 1, start: '08:05', span: 1, slots: ['08:05'], subject: 'MATEMATICA', detail: '3F', color: null }] };
+  for (const order of [[0, 1], [1, 0]]) {
+    const both = [ev('a', 'CLASSE 3F - AULA 94 (PROF. ESEMPIO ASSENTE)', '08:00', '09:00'), ev('b', 'CLASSE 3F - SALA EROS', '08:00', '09:00')];
+    const { days } = buildWeek({ entity: room, table, variations: order.map((i) => both[i]), days: monday });
+    const cell = cellAt(days[0], '08:05');
+    assert.deepEqual([cell.status, cell.movedTo], ['freed', 'Sala Eros']);
+  }
+});
+
 // --- week arithmetic --------------------------------------------------------------
 
-test('weekStart: Monday of the week, next Monday on weekends', () => {
+test('weekStart: Monday of the week, next Monday after the last school day', () => {
   assert.equal(weekStart('2026-10-07'), '2026-10-05'); // Wednesday
   assert.equal(weekStart('2026-10-05'), '2026-10-05'); // Monday
   assert.equal(weekStart('2026-10-10'), '2026-10-12'); // Saturday
   assert.equal(weekStart('2026-10-11'), '2026-10-12'); // Sunday
   assert.equal(weekStart('2026-10-25'), '2026-10-26'); // DST change weekend
+  // Saturday lessons: Saturday still shows this week.
+  assert.equal(weekStart('2026-10-10', 6), '2026-10-05');
+  assert.equal(weekStart('2026-10-11', 6), '2026-10-12');
 });
 
 test('variationsWindow spans yesterday to today + 3', () => {
@@ -490,26 +515,6 @@ test('parseSummary: "PROFF.sse" prefix', () => {
   assert.deepEqual(parseSummary('CLASSE 1A - AULA 4 (PROFF.sse ROSSI, VERDI: ASSENTI)').absent, ['Rossi', 'Verdi']);
 });
 
-test('readingDiffs: parser vs AI reading', async () => {
-  const { readingDiffs } = await import('../utils/timetable/index.js');
-  const idx = { classes: [{ key: '5EELEEET', name: '5Eeleeet' }, { key: '3AIIN', name: '3Ai in' }] };
-  const parsed = parseSummary('CLASSE 5EELEET (ALUNNI IRC) - SALA MENSA - PROF. ROSSI');
-  const same = { classes: ['5EELEEET'], kind: 'change', label: null, room: 'Sala Mensa', teachers: ['Mario Rossi'], absent: [] };
-  assert.deepEqual(readingDiffs(parsed, same, idx), []);
-  const other = { ...same, classes: ['3AIIN'], room: 'Aula 46' };
-  assert.deepEqual(readingDiffs(parsed, other, idx).map((d) => d.split(':')[0]), ['classi', 'aula']);
-});
-
-test('readingDiffs: name spelling differences are not disagreements', async () => {
-  const { readingDiffs } = await import('../utils/timetable/index.js');
-  const p = parseSummary("CLASSE 1A - AULA 94 - PROF.ssa VIGHI GIULIA (PROF. D'AMATO: ASSENTE)");
-  const ai = { classes: ['1A'], kind: 'change', label: null, room: 'Aula 94', teachers: ['Vighi'], absent: ['Amato'] };
-  assert.deepEqual(readingDiffs(p, ai, { classes: [{ key: '1A' }] }), []);
-  const q = parseSummary('CLASSE 4AMME - AULA 852 - PROFF. PASETTI, ALEMANNO');
-  assert.deepEqual(readingDiffs(q, { classes: ['4AMME'], kind: 'change', room: 'Aula 852', teachers: ['Passetti', 'Alemanno'], absent: [] }, { classes: [] }), []);
-  assert.equal(readingDiffs(q, { classes: ['4AMME'], kind: 'change', room: 'Aula 852', teachers: ['Rossi', 'Alemanno'], absent: [] }, { classes: [] }).length, 1);
-});
-
 test('toEvents maps Calendar API events: timed, all-day over several days, cancelled', async () => {
   const { toEvents } = await import('../utils/timetable/calendar.js');
   assert.deepEqual(
@@ -520,4 +525,176 @@ test('toEvents maps Calendar API events: timed, all-day over several days, cance
   assert.deepEqual(trip.map((e) => [e.uid, e.date, e.allDay]), [['b', '2026-10-07', true], ['b@2026-10-08', '2026-10-08', true], ['b@2026-10-09', '2026-10-09', true]]);
   assert.deepEqual(toEvents({ id: 'c', status: 'cancelled', summary: 'X', start: { date: '2026-10-07' } }), []);
   assert.deepEqual(toEvents({ id: 'd', start: { date: '2026-10-07' } }), []);
+});
+
+test('parseSummary: students before CLASSE, activity, room first, cancelled', () => {
+  const p = parseSummary('ALUNNO B. F. CLASSE 3CIIN - AULA 44 - PROVA RECUPERO STORIA - PROFF. COSTABILE, TONINI');
+  assert.deepEqual(
+    { classes: p.classes, group: p.group, room: p.room, activity: p.activity, teachers: p.teachers },
+    { classes: ['3CIIN'], group: 'alunno B. F.', room: 'Aula 44', activity: 'Prova recupero storia', teachers: ['Costabile', 'Tonini'] }
+  );
+  const irc = parseSummary('ALUNNI IRC DELLE CLASSI 2BIN, 1B - AULA 360 - PROF. ABATE G.');
+  assert.deepEqual([irc.classes, irc.group], [['2BIN', '1B'], 'alunni IRC']);
+  assert.deepEqual(parseSummary('AULA 620 - CLASSE 1AME - ASSEMBLEA GENITORI - PROF GHIDINI G.').classes, ['1AME']);
+  // A meeting about a class names the class, and the meeting is the activity.
+  const council = parseSummary('AULA 5 - CONSIGLIO DI CLASSE 5B');
+  assert.deepEqual([council.classes, council.activity], [['5B'], 'Consiglio di classe']);
+  const parents = parseSummary('AULA 9 - RIUNIONE GENITORI CLASSE 1AEL');
+  assert.deepEqual([parents.classes, parents.activity], [['1AEL'], 'Riunione genitori']);
+  assert.equal(parseSummary('CLASSE 3A - PROVA INVALSI MATEMATICA - AULA 46').activity, 'Prova INVALSI matematica');
+  const off = parseSummary('ANNULLATA USCITA DIDATTICA - CLASSE 4A - PROFF. PAPAZZONI');
+  assert.deepEqual([off.cancelled, off.kind, off.classes], [true, 'trip', ['4A']]);
+});
+
+test('parseSummary: class lists, classes late in the title, teachers across dashes', () => {
+  const r = (s) => {
+    const p = parseSummary(s);
+    return { c: p.classes, r: p.room, t: p.teachers, a: p.absent, act: p.activity };
+  };
+  assert.deepEqual(r('CLASSE 5ITEL + 4ITEL (ALUNNI NON IN GITA) - AULA 19 - PROF. MASTRUZZI S.').c, ['5ITEL', '4ITEL']);
+  assert.deepEqual(r('CLASSI 1AME-1EIN - AULA 17 - CORSO RECUPERO INFORMATICA - PROF. BENZI').c, ['1AME', '1EIN']);
+  assert.deepEqual(r('CLASSE 3EAU AULA 509 - PROF CARRERO (Prof CARUSO assente)'), { c: ['3EAU'], r: 'Aula 509', t: ['Carrero'], a: ['Caruso'], act: null });
+  assert.deepEqual(r('CLASSI 5A - 5B - SALA EROS - SIMULAZIONE 2°PROVA - PROFF. FERRARI S. - MELILEO'), {
+    c: ['5A', '5B'], r: 'Sala Eros', t: ['Ferrari S.', 'Melileo'], a: [], act: 'Simulazione 2°PROVA',
+  });
+  assert.deepEqual(r('AULA 13 - PEER TUTORING MATEMATICA - TUTOR SACCANI - CLASSE 3C'), { c: ['3C'], r: 'Aula 13', t: ['Saccani'], a: [], act: 'Peer tutoring matematica' });
+  // Tutors count as teachers; their own class is not involved.
+  assert.deepEqual(r('AULA 444 - PEER TUTORING MATEMATICA CLASSE 3MENE - TUTOR TRIVINI 5CBIO'), { c: ['3MENE'], r: 'Aula 444', t: ['Trivini'], a: [], act: 'Peer tutoring matematica' });
+  assert.deepEqual(r('AULA 23 - PEER TUTORING INFORMATICA CLASSE 3IIN - TUTOR MARIOTTI CLASSE 3IIN').act, 'Peer tutoring informatica');
+  assert.deepEqual(r('AULA 23 - VISIONE PROVE AGOSTO ITALIANO - CLASSI 3EELE, 4CCH A.S. 2025/2026 - PROF.ssa MUSA').c, ['3EELE', '4CCH']);
+  assert.deepEqual(r("CLASSE 2AME - AULA 11 - PROF.D'ECCLESIIS (PROF COMUNIAN ASSENTE)").t, ["D'Ecclesiis"]);
+  assert.deepEqual(r('CLASSE 5AIIN - AULA 380 - PROFF. SECCHI-ZAINI').t, ['Secchi', 'Zaini']);
+  // Titles other than PROF, typos, names inside parentheses or without a title.
+  assert.deepEqual(r('CLASSE 3A - AULA 52- PROF ROSSI -MIT DOTT. VERDI').t, ['Rossi', 'Verdi']);
+  assert.deepEqual(r('CLASSE 1AME - AULA 8 - INCONTRO - SIG . NERI, PROF. BIANCHI M.').t, ['Neri', 'Bianchi M.']);
+  assert.deepEqual(r('CLASSI 3B - AULA 360 - FORMAZIONE SICUREZZA - ING. VERDI (PROFF. ROSSI, BIANCHI)').t, ['Verdi', 'Rossi', 'Bianchi']);
+  assert.deepEqual(r('CLASSE 2AEL - AULA DEBATE - PROF- ROSSI').t, ['Rossi']);
+  assert.deepEqual(r('CLASSE 3D - AULA DEBATE- PROF. ssa ROSSI').t, ['Rossi']);
+  assert.deepEqual(r('CLASSE 3AMME - AULA 443 - INDUSTRIA 4.0 - PROPF. ROSSI').t, ['Rossi']);
+  assert.deepEqual(r('CLASSE 4D - AULA 360 - PROGETTO GREEN JOBS - REF. PROFF. ROSSI S. - VERDI').t, ['Rossi S.', 'Verdi']);
+  assert.deepEqual(r('CLASSE 4D - 4C - AULA MAGNA- INCONTRO AVIS (Referente prof Rossi)').t, ['Rossi']);
+  assert.deepEqual(r('AULA 11 - CONSIGLIO DI CLASSE 1CIN - COORDINATORE PROF. ROSSI').t, ['Rossi']);
+  assert.deepEqual(r('AULA 13 - LAVORO DI GRUPPO - REF. ROSSI  CLASSE 4BMME').t, ['Rossi']);
+  const speaker = r('CLASSI 5D, 5CCH - AULA MAGNA - "BIOGRAFIE LIRICHE" - E. ROSSI');
+  assert.deepEqual([speaker.t, speaker.act], [['E. Rossi'], '"biografie liriche"']);
+  const peer = r('CLASSE 3AIIN - AULA 11 - PEER TUTORING INGLESE - ROSSI 5IIN');
+  assert.deepEqual([peer.t, peer.act], [['Rossi'], 'Peer tutoring inglese']);
+  // Only a tutor's class named: that is the class.
+  assert.deepEqual(r('AULA 9 - PEER TUTORING - TUTOR ROSSI CLASSE 3C').c, ['3C']);
+  assert.deepEqual(r('AULA 15 - PEER TUTORING INFORMATICA 1CIN - TUTOR ROSSI CLASSE 3IIN').c, ['1CIN']);
+  assert.deepEqual(r('CLASSE 1FIN - AULA 2 - PROF. MARSELLA (PROF. CULPO: ASSSENTE)').a, ['Culpo']);
+});
+
+test('parseSummary: whole years, evening classes, school staff, visits', async () => {
+  const { concernsClass } = await import('../utils/timetable/merge.js');
+  const keys = ['1A', '3B', '3AME', '3BMME', '3SMME', '3SIIN', '3BIIN', '4AMME', '4C', '1CIN'];
+  const covers = (s) => keys.filter((k) => concernsClass(parseSummary(s), k));
+  assert.deepEqual(covers('CLASSI 3^ LICEO - AULA 7 - PROVA COMUNE STORIA'), ['3B']);
+  assert.deepEqual(covers('AULA 7 - CLASSI 1^-2^ IT - PROVA RECUPERO STORIA'), ['1CIN']);
+  assert.deepEqual(covers('CLASSI 1^ - 2^ LICEO - PROVA INGLESE - AULA 7'), ['1A']);
+  assert.deepEqual(covers('CLASSI QUARTE - AULA 360 - PROGETTO'), ['4AMME', '4C']);
+  assert.deepEqual(covers('CORSO SERALE - CLASSI TERZE MECCANICA - AULA 15'), ['3SMME']);
+  assert.equal(covers('TUTTE LE CLASSI - LECTIO BREVIS- USCITA ANTICIPATA').length, keys.length);
+  const tri = parseSummary('AULA 11 - CLASSI TRIENNIO LICEO (in assemblea)  ALUNNI NON PARTECIPANTI - PROF. BRIONI');
+  assert.deepEqual([tri.levels.map((l) => l.year), tri.group], [['3', '4', '5'], 'alunni non partecipanti']);
+  assert.deepEqual(parseSummary('CLASSE 4B - AULA 98 - COLLABORATORE SCOLASTICO').teachers, ['Collaboratore scolastico']);
+  const visit = parseSummary('CLASSI 5MENE - VISITA AZIENDALE PIUSI - SUZZARA - PROFF. GALATI, VOCE');
+  assert.deepEqual([visit.kind, visit.teachers], ['trip', ['Galati', 'Voce']]);
+  assert.equal(parseSummary("CLASSE 5A (alunni non viaggio d'istruzione)- AULA 88 - PROF. SPAZZINI").kind, 'change');
+});
+
+test('parseSummary: suspended lessons, groups of a year, places, notes in parentheses', () => {
+  const off = parseSummary('CLASSE 3C - LEZIONE DAD DI FISICA SOSPESA');
+  assert.deepEqual([off.kind, off.label, off.activity], ['off', 'Lezione sospesa', 'Lezione DAD di fisica sospesa']);
+  const half = parseSummary('AULA MAGNA - PROVA COM. FISICA - CLASSI 1^ IT - SECONDO GRUPPO GRUPPO -PROFF. ROSSI, VERDI');
+  assert.deepEqual([half.group, half.activity, half.teachers], ['secondo gruppo', 'Prova com. fisica', ['Rossi', 'Verdi']]);
+  const vote = parseSummary('CLASSE 5MME - SEGGIO 4 - VOTAZIONI (vedi sito area STUDENTI)');
+  assert.deepEqual([vote.room, vote.activity], ['Seggio 4', 'Votazioni']);
+  assert.equal(parseSummary('CLASSE 4MENE - SPETTACOLO TEATRALE - DIFRONTE SALA STAMPA').room, 'Difronte Sala Stampa');
+  const tech = parseSummary('CLASSE 3CCH - AULA DEBATE  (con tecnico + 12 Ipad) - PROF. ROSSI');
+  assert.deepEqual([tech.room, tech.roomNumber], ['Aula Debate (Con Tecnico + 12 Ipad)', null]);
+  assert.equal(parseSummary('AULA 88 - VISIONE PROVE SC. INTEGRATE (CHIMICA) - CLASSI 1AME-1BME - PROF.ssa ROSSI').activity, 'Visione prove sc. integrate (chimica)');
+  assert.equal(parseSummary('CLASSE 4B - AULA 96 - PROF. ROSSI (ANTICIPA 6^ ORA)').activity, 'Anticipa 6^ ora');
+  const back = parseSummary("AULA 13 - PROVA TP - ALUNNO CLASSE 4EELE RIENTRATO DALL'ANNO ALL'ESTERO- PROFF. ROSSI, VERDI");
+  assert.deepEqual([back.classes, back.group, back.teachers], [['4EELE'], "alunno rientrato dall'anno all'estero", ['Rossi', 'Verdi']]);
+  const ref = parseSummary('AULA 50 - LAVORO DI GRUPPO - REF. ALUNNO ROSSI CLASSE 2AEL');
+  assert.deepEqual([ref.classes, ref.group, ref.teachers], [['2AEL'], null, ['Alunno Rossi']]);
+});
+
+test('teacher matching: initials, names after a comma, bare surnames, typos', () => {
+  assert.ok(mentionsTeacher(['Verdi V.'], 'Verdi Valentina'));
+  assert.ok(!mentionsTeacher(['Verdi V.'], 'Verdi Gianni'));
+  assert.ok(mentionsTeacher(['Moretti Gr.'], 'Moretti Graziella'));
+  const p = parseSummary('A.2.1 - AI PER DOCENTI STEM – I CICLO 10h, PROF. PAOLO ROSSI - AULA 11');
+  assert.ok(mentionsTeacher(p.teachers, 'Rossi Paolo'));
+  assert.equal(p.room, 'Aula 11');
+  assert.deepEqual(parseSummary('CLASSE 4AIIN - AULA 380 PROFF. ROSSI, VERDI (PROF. NERI ASSENTE)').teachers, ['Rossi', 'Verdi']);
+  assert.deepEqual(parseSummary('CLASSE 5EELE - AULA 360 - PROF, ROSSI').teachers, ['Rossi']);
+  assert.deepEqual(parseSummary('CLASSE 2BCH - AULA DEBATE - PRO. ROSSI').teachers, ['Rossi']);
+  assert.deepEqual(parseSummary('CLASSE 5ACCH - AULA 92 - PROFF. ROSSI + STUDENTE MIT').teachers, ['Rossi']);
+  assert.deepEqual(parseSummary('CLASSE 4BMME - AULA 438 - PROF. ROSSI (PROF. VERDI ASENTE)').absent, ['Verdi']);
+  assert.deepEqual(parseSummary('CLASSE 4AIIN - AULA 17 - PROF.ssa ROSSI (PROFF. VERDI e NERI: ASSENTI)').absent, ['Verdi', 'Neri']);
+  const off = parseSummary('CLASSI 3^ LICEO - AULA 20 - SPORTELLO MATEMATICA - PROF. ROSSI ANNULLATO');
+  assert.deepEqual([off.cancelled, off.teachers], [true, ['Rossi']]);
+  assert.ok(namesTeacherBare('CLASSE 3A - AULA 381 - ROSSI', 'Rossi Mario'));
+  assert.ok(!namesTeacherBare('AULA 42 - PEER TUTORING - TUTOR ROSSI LINDA (4AIIN) - CLASSE 4AIIN', 'Rossi Mario'));
+  assert.ok(!namesTeacherBare('AULA 363 A DISPOSIZIONE: ROSSI VERDI NERI', 'Rossi Mario'));
+});
+
+test('parseSummary: "CLASSE" with typos, a class written after AULA, rooms after the class', () => {
+  for (const t of ['CLASE 4CIIN - AULA 380 - PROF. ROSSI', 'CLSSE 4CIIN - AULA 380', 'CLASS 4CIIN - AULA 380', 'CLADDE 4CIIN - AULA 380']) {
+    assert.deepEqual(parseSummary(t).classes, ['4CIIN'], t);
+  }
+  assert.deepEqual(parseSummary('AULA 4CCH - AULA 29 - PROF. ROSSI').classes, ['4CCH']);
+  assert.equal(parseSummary('AULA 4CCH - AULA 29 - PROF. ROSSI').room, 'Aula 29');
+  assert.deepEqual(parseSummary('CLASSE 2AEL AULE 620/609 - PROF. ROSSI').classes, ['2AEL']);
+});
+
+test('safety net: an event naming the class / teacher / room is never lost', () => {
+  assert.ok(mentionsClassText('AULA 414 - ORIENTAMENTO 3BMME - PROF. ROSSI', '3BMME'));
+  assert.ok(mentionsClassText('AULA 9 - CLASSE 3 CIIN', '3CIIN'));
+  assert.ok(mentionsClassText('CLASSE 5C BIO - AULA 9', '5CBIO'));
+  assert.ok(!mentionsClassText('FABLAB - CORSO STAMPA 3D - PROF. ROSSI', '3D'));
+  assert.ok(!mentionsClassText('CLASSE 3DIN - AULA 9', '3D'));
+  assert.ok(mentionsTeacherText('AULA 363 A DISPOSIZIONE: VERDI ROSSI NERI', 'Rossi Mario'));
+  assert.ok(mentionsTeacherText('CLASSE 3A - PROF. DEL MODELLO', 'Del Modello Anna'));
+  assert.ok(!mentionsTeacherText('CLASSE 3A - PROF. ROSSINI', 'Rossi Mario'));
+  assert.ok(mentionsRoomText('CLASSE 2AEL AULE 620/609 - PROF. ROSSI', 'Aula 609'));
+  const known = new Set(['2AME', '2BME', '4ABIO', '4BBIO', '3MENE', '3ITEL', '3MENEITEL']);
+  assert.ok(nearClassText('CLASSE 4CBIO - AULA 12', '4ABIO', known)); // no 4CBIO: one letter off
+  assert.ok(!nearClassText('CLASSE 2AME - AULA 12', '2BME', known)); // 2AME exists
+  assert.ok(nearClassText('CLASSE 3MENE - AULA 12', '3MENEITEL', known)); // part of a joint class
+  assert.ok(nearClassText('CLASSE 3ITEL - AULA 12', '3MENEITEL', known));
+
+  const v = [ev('m', 'AULA 414 - ORIENTAMENTO 3BMME - PROF. ESEMPIO', '08:00', '09:00')];
+  const cls = buildWeek({ entity: { type: 'class', key: '3BMME', name: '3BMME' }, table: table1A, variations: v, days: monday });
+  assert.deepEqual(cls.days[0].notes.map((n) => [n.uid, n.maybe]), [['m', true]]);
+  // Placed in a cell: not repeated as a note.
+  const placed = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations: [ev('p', 'CLASSE 1A - AULA 40 - PROF. ESEMPIO', '08:00', '09:00')], days: monday });
+  assert.equal(placed.days[0].notes.length, 0);
+});
+
+test('teacher surnames with typos', () => {
+  const known = teacherContext(['Bottazzi Stefano', 'Marini Luca', 'Marino Anna', 'Del Modello Anna', 'Sai Paolo']);
+  assert.ok(mentionsTeacherTypo(['Botazzi'], 'Bottazzi Stefano', known));
+  assert.ok(mentionsTeacherTypo(['Bottazi S.'], 'Bottazzi Stefano', known));
+  assert.ok(mentionsTeacherTypo(['Del Modelo'], 'Del Modello Anna', known));
+  assert.ok(!mentionsTeacherTypo(['Marini'], 'Marino Anna', known)); // another teacher
+  assert.ok(!mentionsTeacherTypo(['Sau'], 'Sai Paolo', known)); // too short to guess
+  assert.ok(!mentionsTeacherTypo(['De Carlo'], 'Carli Rita', teacherContext(['De Carlo Anna', 'Carli Rita'])));
+  assert.ok(!mentionsTeacherText('AULA 375 - RIUNIONE RADIO FERMI - REF. PROF. ROSSI', 'Ferri Luca', teacherContext(['Ferri Luca']))); // a word, not a teacher
+
+  const teacher = { type: 'teacher', key: 'BOTTAZZISTEFANO', name: 'Bottazzi Stefano' };
+  const table = { times: ['08:05'], weekdays: [1], lessons: [{ weekday: 1, start: '08:05', span: 1, slots: ['08:05'], subject: 'TPS', detail: '3A · Aula 9', className: '3A', color: null }] };
+  assert.ok(!mentionsTeacherTypo(['Bombana B.'], 'Bombani Ivan', teacherContext(['Bombana Benedetta', 'Bombani Ivan']))); // other teacher
+  assert.ok(!mentionsTeacherTypo(['Verona V.'], 'Veronav Ugo', teacherContext(['Verona Valentina', 'Veronav Ugo']))); // initials apart
+  const homonyms = teacherContext(['Bombana Benedetta', 'Bombana Ivan', 'De Carlo Anna', 'Carli Rita']);
+  assert.ok(!mentionsTeacherText('PROF.ssa BOMBANA BENEDETTA', 'Bombana Ivan', homonyms));
+  assert.ok(!mentionsTeacherText('PROF. BOMBANA B.', 'Bombana Ivan', homonyms));
+  assert.ok(mentionsTeacherText('PROF. BOMBANA', 'Bombana Ivan', homonyms));
+  assert.ok(mentionsTeacherText('PROF. BOMBANA I.', 'Bombana Ivan', homonyms));
+  // A typo is only a "possible" note, never a cell.
+  const week = buildWeek({ entity: teacher, table, variations: [ev('a', 'CLASSE 5B - AULA 9 - PROF. ROSSI (PROF. BOTAZZI ASSENTE)', '08:00', '09:00')], days: monday, teachers: known });
+  assert.equal(cellAt(week.days[0], '08:05').status, 'regular');
+  assert.deepEqual(week.days[0].notes.map((n) => n.maybe), [true]);
 });
