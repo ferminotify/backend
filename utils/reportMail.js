@@ -32,22 +32,30 @@ function gmailTransport() {
  * @returns {Promise<{via:'gmail'|'fallback'}>}  throws when the report could not be delivered
  */
 export async function sendReportMail({ subject, html, text, replyTo, attachments = [] }) {
+  let why = 'GMAIL_APP_PASSWORD non configurata';
   if (gmailUser && gmailPass) {
-    await gmailTransport().sendMail({
-      from: `Fermi Notify <${gmailUser}>`,
-      to: REPORT_EMAIL,
-      subject,
-      html,
-      text,
-      replyTo: replyTo || undefined,
-      attachments,
-    });
-    return { via: 'gmail' };
+    try {
+      await gmailTransport().sendMail({
+        from: `Fermi Notify <${gmailUser}>`,
+        to: REPORT_EMAIL,
+        subject,
+        html,
+        text,
+        replyTo: replyTo || undefined,
+        attachments,
+      });
+      return { via: 'gmail' };
+    } catch (err) {
+      // Daily sending limit, revoked App Password, Gmail down: the report still goes out.
+      log.error('Gmail report failed, using the regular sender', { error: err.message, code: err.responseCode });
+      why = 'invio Gmail non riuscito';
+    }
   }
+  const contact = replyTo ? `<p>Rispondi a: ${replyTo.replace(/[<>&"']/g, '')}</p>` : '';
   const result = await sendMailAsync(
     REPORT_EMAIL,
     subject,
-    attachments.length ? `${html}<p><i>Screenshot allegato non inviato (GMAIL_APP_PASSWORD non configurata).</i></p>` : html,
+    `${html}${contact}${attachments.length ? `<p><i>Screenshot allegato non inviato (${why}).</i></p>` : ''}`,
     text
   );
   if (result?.skipped) throw new Error('No email transport configured');

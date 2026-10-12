@@ -1,4 +1,5 @@
 import express from 'express';
+import { clientIp } from '../utils/clientIp.js';
 import logger from '../utils/logger.js';
 import {
   ALL_TYPES,
@@ -9,6 +10,7 @@ import {
   logoutSession,
   sessionSeesTeachers,
   testVariation,
+  testExamples,
   SchoolLoginError,
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
@@ -71,8 +73,6 @@ function tooManyAttempts(key, max) {
   return entry.count > max;
 }
 
-// Behind Caddy: it sets X-Forwarded-For to the client address.
-const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip;
 
 router.post('/school-login', async (req, res) => {
   res.set('Cache-Control', 'no-store');
@@ -178,6 +178,17 @@ router.get('/', async (req, res) => {
     if (err instanceof SchoolSessionExpired) return sessionExpired(res);
     log.error('Index failed', { error: err.message });
     res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
+  }
+});
+
+/** Test page: random calendar events to try. */
+router.get('/test/examples', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json({ examples: await testExamples() });
+  } catch (err) {
+    log.error('Examples failed', { error: err.message });
+    res.status(502).json({ error: 'Calendario non raggiungibile' });
   }
 });
 

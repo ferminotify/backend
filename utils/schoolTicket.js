@@ -6,11 +6,12 @@ import crypto from 'node:crypto';
 // Django's session cookie lives 14 days; stop a bit earlier.
 export const TICKET_TTL_MS = 13 * 24 * 60 * 60 * 1000;
 
-const key = () =>
-  crypto
-    .createHash('sha256')
-    .update(`school-ticket:${process.env.SCHOOL_TICKET_SECRET || process.env.JWT_SECRET}`)
-    .digest();
+const key = () => {
+  const secret = process.env.SCHOOL_TICKET_SECRET || process.env.JWT_SECRET;
+  // Without a secret the key would be guessable and tickets forgeable: refuse instead.
+  if (!secret) throw new Error('SCHOOL_TICKET_SECRET / JWT_SECRET not set');
+  return crypto.createHash('sha256').update(`school-ticket:${secret}`).digest();
+};
 
 /** @param {{ sessionid: string, csrftoken?: string }} session */
 export function sealTicket(session, now = Date.now()) {

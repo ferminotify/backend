@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { brEntries, parseIndex, parseTable } from '../utils/timetable/school.js';
 import { parseEventsCsv, parseSummary } from '../utils/timetable/variations.js';
-import { buildWeek, mentionsClassText, mentionsTeacherTypo, nearClassText, teacherContext, mentionsRoomText, mentionsTeacher, mentionsTeacherText, namesTeacherBare, variationSlots } from '../utils/timetable/merge.js';
+import { buildWeek, mentionsClassText, mentionsTeacherTypo, nearClassText, teacherContext, mentionsRoomText, mentionsTeacher, mentionsTeacherText, namesTeacherBare, alignedToSlots, jointClasses, jointsOf, lessonRole, offLessons, SCHOOL_SLOTS, variationSlots } from '../utils/timetable/merge.js';
 import { entityKey, sameClassKey, sameRoom } from '../utils/timetable/normalize.js';
 import { weekStart, variationsWindow } from '../utils/timetable/index.js';
 import { sealTicket, openTicket, TICKET_TTL_MS } from '../utils/schoolTicket.js';
@@ -147,7 +147,18 @@ test('variationSlots snaps round calendar hours onto lesson slots', () => {
   assert.deepEqual(variationSlots(v('change', '13:00', '14:00')), ['13:00']);
   assert.deepEqual(variationSlots(v('entry', '10:00', '10:00')), ['08:05', '09:00']);
   assert.deepEqual(variationSlots(v('exit', '12:00', '12:00')), ['12:05', '13:00', '14:15', '15:10']);
-  assert.deepEqual(variationSlots(v('change', '15:30', '17:30')), []);
+  // Starts mid-lesson, past the last start: the lesson it overlaps.
+  assert.deepEqual(variationSlots(v('change', '15:30', '17:30')), ['15:10']);
+  assert.deepEqual(variationSlots(v('change', '09:20', '09:50')), ['09:00']);
+  // Real times overlapping lessons: every lesson overlapped (not only those starting inside).
+  assert.deepEqual(variationSlots(v('change', '10:30', '11:30')), ['10:05', '11:00']);
+  assert.deepEqual(variationSlots(v('change', '14:00', '18:00')), ['14:15', '15:10']);
+  // Lessons end 55' after the start: 13:30–15:00 covers 25' of the 13:00 lesson, 13:50–15:00 only 5'.
+  assert.deepEqual(variationSlots(v('change', '13:30', '15:00')), ['13:00', '14:15']);
+  assert.deepEqual(variationSlots(v('change', '13:50', '15:00')), ['14:15']);
+  // Outside school hours, or overlapping only a few minutes: no slot (note of the day).
+  assert.deepEqual(variationSlots(v('change', '16:30', '18:00')), []);
+  assert.deepEqual(variationSlots(v('change', '15:58', '17:00')), []);
   const evening = ['18:15', '19:05', '20:10', '21:00', '21:50'];
   assert.deepEqual(variationSlots(v('change', '18:15', '19:05'), evening), ['18:15']);
 });
@@ -229,12 +240,66 @@ test('buildWeek: other classes and other days are ignored; unmapped events becom
   const variations = [
     ev('o', 'CLASSE 2A - AULA 46 - PROF. ESEMPIO', '08:00', '09:00'),
     ev('d', 'CLASSE 1A - AULA 46 - PROF. ESEMPIO', '08:00', '09:00', '2026-10-06'),
-    ev('n', 'CLASSE 1A - AULA 40 - STUDIO AUTONOMO', '15:30', '17:30'),
+    ev('n', 'CLASSE 1A - ASSEMBLEA DI CLASSE', '17:00', '17:00'), // an instant after the lessons
   ];
   const { days } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
   assert.ok(days[0].cells.every((c) => c.status === 'regular'));
   assert.equal(days[0].notes.length, 1);
   assert.equal(days[0].notes[0].uid, 'n');
+});
+
+test('buildWeek: an event out of the lessons gets its own row with exact times', () => {
+  const last = table1A.lessons.filter((l) => l.weekday === 1).flatMap((l) => l.slots).sort().pop();
+  assert.ok(last < '15:10', 'fixture: 1A has no lesson in the last slot on Monday');
+  const variations = [ev('x', 'CLASSE 1A - AULA 40 - STUDIO AUTONOMO', '15:30', '17:30')];
+  const { days, times, extraTimes } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
+  const cell = days[0].cells.find((c) => c.start === '15:30');
+  assert.equal(cell?.status, 'added');
+  assert.equal(cell.end, '17:30');
+  assert.ok(times.includes('15:30'));
+  assert.deepEqual(extraTimes, ['15:30']);
+  assert.equal(days[0].notes.length, 0);
+});
+
+test('alignedToSlots: round calendar hours are lesson hours, other times are real', () => {
+  const e = (start, end) => ({ kind: 'change', start, end, allDay: false });
+  assert.equal(alignedToSlots(e('08:00', '10:00')), true);
+  assert.equal(alignedToSlots(e('14:00', '15:00')), true);
+  assert.equal(alignedToSlots(e('13:00', '14:00')), true);
+  assert.equal(alignedToSlots(e('10:30', '11:30')), false);
+  assert.equal(alignedToSlots(e('15:00', '18:00')), false);
+  assert.equal(alignedToSlots(e('10:00', '10:00')), true); // an instant: not a range
+  assert.equal(alignedToSlots(e('13:00', '14:00')), true); // 13:00–13:55, 5' off
+  assert.equal(alignedToSlots(e('09:00', '11:00')), true); // 09:00 → 11:00 (end of the 10:05 lesson)
+  // Rooms used by evening classes too: the last day lesson still ends at 16:05.
+  assert.equal(alignedToSlots(e('14:00', '16:00'), [...SCHOOL_SLOTS, '18:15', '19:05']), true);
+});
+
+test('buildWeek: a variation with real times over lessons is an overlay, lessons unchanged', () => {
+  const variations = [ev('r', 'CLASSE 1A - AULA 40 - PROF. ESEMPIO', '08:30', '09:30')];
+  const { days } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
+  assert.ok(days[0].cells.every((c) => c.status === 'regular' && !c.variations.length));
+  assert.equal(days[0].overlays.length, 1);
+  const o = days[0].overlays[0];
+  assert.deepEqual([o.start, o.end, o.slots], ['08:30', '09:30', ['08:05', '09:00']]);
+  assert.equal(o.variations[0].offGrid, true);
+  assert.equal(days[0].notes.length, 0);
+});
+
+test('offLessons: exact times only when no lesson is overlapped and the hours do not line up', () => {
+  const lessons = new Set(['08:05', '09:00', '10:05', '11:00', '12:05', '13:00']);
+  const e = (start, end, kind = 'change') => ({ kind, start, end, allDay: false });
+  assert.equal(offLessons(e('15:30', '17:30'), SCHOOL_SLOTS, lessons), true);
+  assert.equal(offLessons(e('16:30', '18:00'), SCHOOL_SLOTS, lessons), true);
+  assert.equal(offLessons(e('14:15', '16:05'), SCHOOL_SLOTS, lessons), false); // lines up with the slots
+  assert.equal(offLessons(e('14:00', '15:00'), SCHOOL_SLOTS, lessons), false); // snaps to 14:15
+  assert.equal(offLessons(e('12:30', '14:00'), SCHOOL_SLOTS, lessons), false); // overlaps a lesson
+  assert.equal(offLessons(e('15:30', '17:30'), SCHOOL_SLOTS, new Set([...lessons, '15:10'])), false);
+  assert.equal(offLessons(e('16:00', '16:00'), SCHOOL_SLOTS, lessons), false);
+  // A free hour between two lessons: stays on the lesson grid.
+  assert.equal(offLessons(e('10:30', '11:30'), SCHOOL_SLOTS, new Set(['08:05', '09:00', '12:05'])), false);
+  assert.equal(offLessons(e('10:30', '11:30'), SCHOOL_SLOTS, new Set(['08:05', '09:00'])), true);
+  assert.equal(offLessons(e('16:00', '16:00', 'exit'), SCHOOL_SLOTS, lessons), false);
 });
 
 test('buildWeek: a variation in a free hour adds a cell and its row', () => {
@@ -367,12 +432,12 @@ test('buildWeek: teacher view — absence, substitution elsewhere, class away', 
     ev('a', 'CLASSE 3F - AULA 94 - PROF. VERDI (PROF. ROSSI: ASSENTE)', '08:00', '09:00'),
     ev('s', 'CLASSE 5B - AULA 40 - PROF. ROSSI', '10:00', '11:00'),
     ev('t', 'CLASSE 4C - USCITA DIDATTICA - PROF. NERI', '11:00', '12:00'),
-    ev('x', 'CLASSE 2A - AULA 46 - PROF. GIALLI', '09:00', '10:00'), // Rossi's class 2A moves room
+    ev('x', 'CLASSE 2A - AULA 46 - PROF. GIALLI', '09:00', '10:00'), // Rossi's class 2A given to Gialli
   ];
   const { days } = buildWeek({ entity, table, variations, days: monday });
   const at = (slot) => cellAt(days[0], slot);
   assert.equal(at('08:05').status, 'cancelled'); // absent
-  assert.equal(at('09:00').status, 'changed'); // own class 2A changes
+  assert.equal(at('09:00').status, 'cancelled'); // own class 2A with another teacher: Rossi absent
   assert.equal(at('10:05').status, 'added'); // substitution in 5B during a free hour
   assert.equal(at('10:05').occupant, '5B');
   assert.equal(at('11:00').status, 'cancelled'); // 4C on a trip
@@ -665,10 +730,23 @@ test('safety net: an event naming the class / teacher / room is never lost', () 
   assert.ok(!nearClassText('CLASSE 2AME - AULA 12', '2BME', known)); // 2AME exists
   assert.ok(nearClassText('CLASSE 3MENE - AULA 12', '3MENEITEL', known)); // part of a joint class
   assert.ok(nearClassText('CLASSE 3ITEL - AULA 12', '3MENEITEL', known));
+  assert.ok(nearClassText('CLASSE 3MENEITEL - SALA EROS', '3ITEL', known)); // the second part too
+  assert.ok(nearClassText('CLASSE 3MENEITEL - SALA EROS', '3MENE', known));
 
   const v = [ev('m', 'AULA 414 - ORIENTAMENTO 3BMME - PROF. ESEMPIO', '08:00', '09:00')];
   const cls = buildWeek({ entity: { type: 'class', key: '3BMME', name: '3BMME' }, table: table1A, variations: v, days: monday });
-  assert.deepEqual(cls.days[0].notes.map((n) => [n.uid, n.maybe]), [['m', true]]);
+  // On the lesson it covers: marked possible, the lesson kept; no note.
+  assert.equal(cellAt(cls.days[0], '08:05').status, 'maybe');
+  assert.deepEqual(cellAt(cls.days[0], '08:05').variations.map((x) => [x.uid, x.maybe]), [['m', true]]);
+  assert.equal(cls.days[0].notes.length, 0);
+  // No lesson then: the event itself in the grid, flagged possible.
+  const free = buildWeek({ entity: { type: 'class', key: '3BMME', name: '3BMME' }, table: table1A, variations: [ev('f', 'AULA 414 - ORIENTAMENTO 3BMME', '14:00', '15:00')], days: monday });
+  assert.equal(cellAt(free.days[0], '14:15')?.status, 'maybe');
+  assert.equal(cellAt(free.days[0], '14:15').subject, null);
+  assert.equal(free.days[0].notes.length, 0);
+  // An instant with no slot: still a note.
+  const instant = buildWeek({ entity: { type: 'class', key: '3BMME', name: '3BMME' }, table: table1A, variations: [ev('i', 'AULA 414 - ORIENTAMENTO 3BMME', '17:00', '17:00')], days: monday });
+  assert.deepEqual(instant.days[0].notes.map((n) => [n.uid, n.maybe]), [['i', true]]);
   // Placed in a cell: not repeated as a note.
   const placed = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations: [ev('p', 'CLASSE 1A - AULA 40 - PROF. ESEMPIO', '08:00', '09:00')], days: monday });
   assert.equal(placed.days[0].notes.length, 0);
@@ -693,8 +771,50 @@ test('teacher surnames with typos', () => {
   assert.ok(!mentionsTeacherText('PROF. BOMBANA B.', 'Bombana Ivan', homonyms));
   assert.ok(mentionsTeacherText('PROF. BOMBANA', 'Bombana Ivan', homonyms));
   assert.ok(mentionsTeacherText('PROF. BOMBANA I.', 'Bombana Ivan', homonyms));
-  // A typo is only a "possible" note, never a cell.
+  // A typo only marks the lesson "possible": never cancels or changes it.
   const week = buildWeek({ entity: teacher, table, variations: [ev('a', 'CLASSE 5B - AULA 9 - PROF. ROSSI (PROF. BOTAZZI ASSENTE)', '08:00', '09:00')], days: monday, teachers: known });
-  assert.equal(cellAt(week.days[0], '08:05').status, 'regular');
-  assert.deepEqual(week.days[0].notes.map((n) => n.maybe), [true]);
+  assert.equal(cellAt(week.days[0], '08:05').status, 'maybe');
+  assert.deepEqual(cellAt(week.days[0], '08:05').variations.map((n) => n.maybe), [true]);
+});
+
+test('lessonRole: same teacher = same lesson, another = substitution, ANTICIPA = the later lesson', () => {
+  const slots = SCHOOL_SLOTS;
+  const lessons = [
+    { weekday: 1, start: '08:05', slots: ['08:05'], subject: 'MATEMATICA', teachers: ['Rossi Mario'] },
+    { weekday: 1, start: '13:00', slots: ['13:00'], subject: 'STORIA', teachers: ['Giammanco Anna'] },
+  ];
+  const cell = (summary) => ({ start: '08:05', status: 'changed', variations: [{ kind: 'change', summary, ...parseSummary(summary) }] });
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46'), lessons, slots), null); // room only
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. ROSSI'), lessons, slots), null); // same teacher
+  assert.deepEqual(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI'), lessons, slots), { role: 'substitute' });
+  assert.deepEqual(lessonRole(cell("CLASSE 1A - AULA 918 - PROF.ssa GIAMMANCO (ANTICIPA 6' ORA)"), lessons, slots), { role: 'early', subject: 'STORIA' });
+  // Teachers unknown: an absent one means a substitution, otherwise the lesson as it is.
+  assert.deepEqual(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROF. ROSSI: ASSENTE)'), [], slots), { role: 'substitute' });
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI'), [], slots), null);
+});
+
+test('joint classes are found from the class list alone', () => {
+  const known = ['3MENE', '3ITEL', '3MENEITEL', '5EELE', '5EET', '5EELEEET', '3A', '3AIN', '1QIN', '1QINGRUPPO1'];
+  assert.deepEqual(Object.fromEntries(jointClasses(known)), { '3MENEITEL': ['3MENE', '3ITEL'], '5EELEEET': ['5EELE', '5EET'] });
+  assert.deepEqual(jointsOf('3ITEL', known), ['3MENEITEL']);
+  assert.deepEqual(jointsOf('3A', known), []);
+});
+
+test('buildWeek: a part of a joint class takes the joint class events as its own', () => {
+  const known = new Set(['3MENE', '3ITEL', '3MENEITEL']);
+  const table = { times: ['08:05'], weekdays: [1], lessons: [{ weekday: 1, start: '08:05', span: 1, slots: ['08:05'], subject: 'X', detail: 'Aula 1', color: null, jointWith: '3Mene' }] };
+  const variations = [ev('j', 'CLASSE 3MENEITEL - SALA EROS', '08:00', '09:00')];
+  const { days } = buildWeek({ entity: { type: 'class', key: '3ITEL', name: '3Itel' }, table, variations, days: monday, knownClasses: known });
+  assert.equal(days[0].cells[0].status, 'changed');
+  assert.equal(days[0].cells[0].jointWith, '3Mene');
+});
+
+test('buildWeek (teacher): own class given to another teacher → absent', () => {
+  const teacher = { type: 'teacher', key: 'CULPOMARIO', name: 'Culpo Mario' };
+  const table = { times: ['08:05'], weekdays: [1], lessons: [{ weekday: 1, start: '08:05', span: 1, slots: ['08:05'], subject: 'GPOI', detail: '5Bi in · Aula 2', className: '5BIIN', color: null }] };
+  const other = buildWeek({ entity: teacher, table, variations: [ev('r', 'CLASSE 5BIIN - AULA 2- PROF.ssa RAVANINI', '11:00', '12:00')].map((x) => ({ ...x, start: '08:00', end: '09:00' })), days: monday });
+  assert.equal(other.days[0].cells[0].status, 'cancelled');
+  // Only the room changes (no teacher named): still their lesson.
+  const room = buildWeek({ entity: teacher, table, variations: [ev('m', 'CLASSE 5BIIN - AULA 40', '08:00', '09:00')], days: monday });
+  assert.equal(room.days[0].cells[0].status, 'changed');
 });

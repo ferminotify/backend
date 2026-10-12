@@ -1,6 +1,7 @@
 // "Segnala un problema": anonymous reports about the timetable page, emailed to the admins.
 // Mounted before the global JSON parser: the optional screenshot needs a larger body limit.
 import express from 'express';
+import { clientIp } from '../utils/clientIp.js';
 import logger from '../utils/logger.js';
 import { REPORT_EMAIL, sendReportMail } from '../utils/reportMail.js';
 
@@ -14,22 +15,30 @@ router.use(express.json({ limit: '6mb' }));
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_IP = 5;
 const MAX_TOTAL = 60;
+// Per day too: well under Gmail's ~500 messages a day, so the inbox account keeps working.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_PER_DAY = 200;
 const attempts = new Map(); // ip -> { count, reset }
 let total = { count: 0, reset: 0 };
+let daily = { count: 0, reset: 0 };
 
-function limited(ip) {
+export function limited(ip) {
   const now = Date.now();
   if (total.reset < now) total = { count: 0, reset: now + WINDOW_MS };
+  if (daily.reset < now) daily = { count: 0, reset: now + DAY_MS };
   if (attempts.size > 5000) for (const [k, v] of attempts) if (v.reset < now) attempts.delete(k);
   const entry = attempts.get(ip);
   if (!entry || entry.reset < now) attempts.set(ip, { count: 1, reset: now + WINDOW_MS });
   else entry.count += 1;
+  // Over its own limit: refused without touching the shared budgets, so one address that
+  // keeps trying cannot use up the hour or the day for everybody.
+  if (attempts.get(ip).count > MAX_PER_IP) return true;
+  if (total.count >= MAX_TOTAL || daily.count >= MAX_PER_DAY) return true;
   total.count += 1;
-  return attempts.get(ip).count > MAX_PER_IP || total.count > MAX_TOTAL;
+  daily.count += 1;
+  return false;
 }
 
-// Behind Caddy: it sets X-Forwarded-For to the client address.
-const clientIp = (req) => String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip;
 
 const escapeHtml = (s) =>
   String(s ?? '')
@@ -82,6 +91,7 @@ const TONES = {
   added: { bg: '#f4f8ff', border: '#0b57d0', dashed: true, badgeBg: '#dbe6fb', badgeFg: '#0b57d0' },
   cancelled: { bg: '#f5f5f5', border: '#d6d6d6', badgeBg: '#fde7e7', badgeFg: '#b3261e', struck: true },
   freed: { bg: '#f5f5f5', border: '#d6d6d6', badgeBg: '#e6f4ea', badgeFg: '#146c2e', struck: true },
+  maybe: { bg: '#fff8e1', border: '#c79a1e', dashed: true, badgeBg: '#fdf0c2', badgeFg: '#7a5a00' },
 };
 
 /** `pct`% of `hex` over white: the tint the page uses for regular lessons. */
@@ -97,8 +107,8 @@ export function readCard(card) {
   const lines = Array.isArray(card.lines)
     ? card.lines
         .slice(0, 8)
-        .map((l) => ({ text: str(l?.text, 300), was: str(l?.was, 300) }))
-        .filter((l) => l.text)
+        .map((l) => ({ text: str(l?.text, 300), was: str(l?.was, 300), wasFirst: l?.wasFirst === true }))
+        .filter((l) => l.text || l.was)
     : [];
   return {
     tone: card.tone,
@@ -107,6 +117,7 @@ export function readCard(card) {
     lines,
     original: str(card.original, 300),
     plain: card.plain === true,
+    titleStruck: card.titleStruck === true,
     color: typeof card.color === 'string' && /^#[0-9a-f]{6}$/i.test(card.color) ? card.color : null,
     raw: Array.isArray(card.raw) ? card.raw.slice(0, 6).map((r) => str(r, 400)).filter(Boolean) : [],
   };
@@ -124,12 +135,14 @@ export function cardHtml(c) {
     c.badge && t.badgeBg
       ? `<div style="margin:0 0 6px"><span style="display:inline-block;padding:2px 8px;border-radius:999px;background:${t.badgeBg};color:${t.badgeFg};font-size:11px;font-weight:bold;letter-spacing:.02em;text-transform:uppercase">${escapeHtml(c.badge)}</span></div>`
       : '';
-  const title = `<div style="font-size:14px;font-weight:bold;color:${t.struck ? '#777777' : '#1f1f1f'};${t.struck ? 'text-decoration:line-through;' : ''}">${dot}${escapeHtml(c.title)}</div>`;
+  const struck = t.struck || c.titleStruck;
+  const title = `<div style="font-size:14px;font-weight:bold;color:${struck ? '#777777' : '#1f1f1f'};${struck ? 'text-decoration:line-through;' : ''}">${dot}${escapeHtml(c.title)}</div>`;
+  const was = (l) => (l.was ? `<s style="font-size:12px;color:#8a8a8a">${escapeHtml(l.was)}</s>` : '');
   const lines = c.lines
     .map(
       (l) =>
-        `<div style="font-size:13px;color:${c.tone === 'changed' ? '#1f1f1f' : '#444746'}">${escapeHtml(l.text)}${
-          l.was ? ` <s style="font-size:12px;color:#8a8a8a">${escapeHtml(l.was)}</s>` : ''
+        `<div style="font-size:13px;color:${c.tone === 'changed' ? '#1f1f1f' : '#444746'}">${
+          l.wasFirst ? `${was(l)} ${escapeHtml(l.text)}` : `${escapeHtml(l.text)} ${was(l)}`
         }</div>`
     )
     .join('');
@@ -144,10 +157,10 @@ router.post('/timetable', async (req, res) => {
   // Honeypot: a field hidden from people, filled in by bots.
   if (str(body.website, 200)) return res.status(204).end();
 
-  const description = str(body.description, 3000);
+  const description = str(body.description, Infinity); // no cap: the 6 MB body limit bounds it
   const expected = str(body.expected, 3000);
   const email = str(body.email, 200);
-  if (description.length < 5) return res.status(400).json({ error: 'Descrivi il problema' });
+  if (!description) return res.status(400).json({ error: 'Descrivi il problema' });
   if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'Email non valida' });
 
   let image = null;
