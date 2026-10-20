@@ -12,6 +12,7 @@ import {
   sessionSeesTeachers,
   testVariation,
   testExamples,
+  upcomingEvents,
   SchoolLoginError,
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
@@ -157,6 +158,18 @@ router.get('/', async (req, res) => {
     if (err instanceof SchoolSessionExpired) return sessionExpired(res);
     log.error('Index failed', { error: err.message });
     res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
+  }
+});
+
+/** "Cerca eventi" (home, dashboard): the calendar events from today on. Public, no teachers. */
+router.get('/events', async (req, res) => {
+  try {
+    const { events, source } = await upcomingEvents();
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ events, source });
+  } catch (err) {
+    log.error('Events failed', { error: err.message });
+    res.status(502).json({ error: 'Calendario non raggiungibile' });
   }
 });
 

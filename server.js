@@ -9,6 +9,7 @@ import pushRouter from './routes/push.js';
 import mediaRouter from './routes/media.js';
 import timetableRouter from './routes/timetable.js';
 import moodleRouter from './routes/moodle.js';
+import notifierRouter from './routes/notifier.js';
 import reportRouter from './routes/report.js';
 import cookieParser from 'cookie-parser';
 
@@ -60,6 +61,7 @@ app.use((err, req, res, next) => {
 });
 // Own body parser with a larger limit (optional screenshot): before the global one.
 app.use('/report', reportRouter);
+app.use('/notifier', notifierRouter);
 app.use(express.json());
 app.use(cookieParser());
 

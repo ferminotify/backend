@@ -263,3 +263,18 @@ export async function testExamples(count = 5) {
   }
   return out.map((v) => ({ summary: v.summary.trim(), date: v.date, start: v.start || null, end: v.end || null, allDay: Boolean(v.allDay) }));
 }
+
+/**
+ * "Cerca eventi": the calendar events from today on, as published (no parsing applied),
+ * sorted by day and time. Same source and cache as the timetable (Calendar API, else the CSV).
+ * @returns {Promise<{ events: object[], source: string, stale: boolean }>}
+ */
+export async function upcomingEvents() {
+  const { variations, source, stale } = await getVariations();
+  const today = schoolToday();
+  const events = variations
+    .filter((v) => v.date >= today)
+    .map(({ uid, summary, date, start, end, allDay }) => ({ uid, summary, date, start, end, allDay }))
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.start || '').localeCompare(b.start || '') || (a.end || '').localeCompare(b.end || ''));
+  return { events, source, stale };
+}

@@ -29,7 +29,8 @@ CREATE TABLE public.subscribers (
     onboarding               boolean                DEFAULT false,
     google_id                character varying(40)  UNIQUE,
     profile_complete         boolean                DEFAULT true,
-    school_username          character varying(150) UNIQUE
+    school_username          character varying(150) UNIQUE,
+    notify_optin             text[]                 NOT NULL DEFAULT '{}'
 );
 
 -- ── refresh_tokens ────────────────────────────────────────────────────────────

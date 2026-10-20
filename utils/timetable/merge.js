@@ -182,7 +182,7 @@ export function mentionsTeacherTypo(names, fullName, ctx = EMPTY_CONTEXT) {
 // with the day's notes, marked `maybe`. A wrong guess costs one line; a missed variation
 // costs a student or teacher in the wrong place.
 
-const textWords = (summary) =>
+export const textWords = (summary) =>
   String(summary || '')
     .toUpperCase()
     .normalize('NFD')
