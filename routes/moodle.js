@@ -123,7 +123,7 @@ router.post('/complete', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const taken = await client.query('SELECT id, notifications, school_username FROM subscribers WHERE email = $1 OR lower(school_username) = lower($2)', [
+    const taken = await client.query('SELECT id, notifications, school_username FROM subscribers WHERE lower(email) = lower($1) OR lower(school_username) = lower($2)', [
       email,
       claims.schoolUsername,
     ]);
@@ -135,7 +135,7 @@ router.post('/complete', async (req, res) => {
       // The address has an account (password or Google). Typing it proves nothing: the owner
       // links Moodle from a link sent there (POST /link), or nothing changes.
       await client.query('ROLLBACK');
-      const { rows } = await pool.query('SELECT id, name, school_username FROM subscribers WHERE email = $1', [email]);
+      const { rows } = await pool.query('SELECT id, name, school_username FROM subscribers WHERE lower(email) = lower($1)', [email]);
       const owner = rows[0];
       if (owner?.school_username) {
         return res.status(409).json({ error: 'Questa email è già collegata a un altro account Moodle', code: 'email_taken' });

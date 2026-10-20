@@ -107,7 +107,7 @@ router.get('/callback', async (req, res) => {
     } else {
       // 2) Existing account with the same (verified) email → auto-link.
       const byEmail = await pool.query(
-        'SELECT id FROM subscribers WHERE email = $1',
+        'SELECT id FROM subscribers WHERE lower(email) = lower($1)',
         [email]
       );
       if (byEmail.rowCount > 0) {

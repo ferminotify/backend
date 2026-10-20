@@ -73,7 +73,7 @@ router.put('/register', async (req, res) => {
     // If email already exists: if confirmed (notifications > -1) => error, else resend confirmation email and return 200
     try {
         const existing = await pool.query(
-            'SELECT id, email, telegram, notifications, unsub_token, name as db_name, gender as db_gender FROM subscribers WHERE email = $1',
+            'SELECT id, email, telegram, notifications, unsub_token, name as db_name, gender as db_gender FROM subscribers WHERE lower(email) = lower($1)',
             [email]
         );
         if (existing.rowCount > 0) {
@@ -208,7 +208,7 @@ router.post('/login', async (req, res) => {
     email = email.trim().toLowerCase();
 
     try {
-    const result = await pool.query('SELECT * FROM subscribers WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM subscribers WHERE lower(email) = lower($1)', [email]);
     if (result.rowCount === 0) {
         log.warn('Login failed - email not found', { email: email?.toLowerCase(), ip: req.ip });
         return res.status(404).json({ error: 'Email not found' });
@@ -369,7 +369,7 @@ router.post('/request-change-password', async (req, res) => {
         const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
         try {
             await pool.query(
-                `UPDATE subscribers SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP WHERE email = $2;`,
+                `UPDATE subscribers SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP WHERE lower(email) = lower($2);`,
                 [randomCode, email]
             );
         } catch (err) {
@@ -440,7 +440,7 @@ router.post('/new-change-password', async (req, res) => {
         
         const hashed = await bcrypt.hash(newPassword, 10);
         await pool.query(
-            `UPDATE subscribers SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL WHERE email = $2`,
+            `UPDATE subscribers SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL WHERE lower(email) = lower($2)`,
             [hashed, email]
         );
 
