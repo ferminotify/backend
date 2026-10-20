@@ -25,10 +25,10 @@ const router = express.Router();
 const log = logger.child('timetable');
 
 // Teachers are shown to:
-// - confirmed @fermimn.edu.it Fermi Notify accounts (utils/schoolAccess.js), fetched with
-//   the service account from the env;
-// - users logged in with their own school (Moodle) credentials (utils/schoolTicket.js),
-//   fetched with their session.
+// - users with their own school (Moodle) session: logged in with Moodle on /orario, or
+//   with a Moodle account (utils/schoolTicket.js), fetched with that session;
+// - any other confirmed Fermi Notify account (utils/schoolAccess.js), fetched with the
+//   service account from the env.
 const canSeeTeachers = (req) => Boolean(req.schoolSession || req.schoolUser);
 
 // Public, read-only. Short browser cache: variations change during the day.
@@ -278,7 +278,7 @@ router.get('/:type/:ref', async (req, res) => {
   const type = { classe: 'class', aula: 'room', docente: 'teacher' }[req.params.type] || req.params.type;
   if (!ALL_TYPES.includes(type)) return res.status(404).json({ error: 'Tipo non valido' });
   if (type === 'teacher' && !canSeeTeachers(req)) {
-    return res.status(403).json({ error: 'Orario docenti disponibile solo accedendo con Moodle o con un account @fermimn.edu.it' });
+    return res.status(403).json({ error: 'Orario docenti disponibile solo accedendo a Fermi Notify o con Moodle' });
   }
 
   try {
