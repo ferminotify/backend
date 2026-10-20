@@ -85,6 +85,11 @@ export function offLessons(v, slots, lessonSlots) {
 
 const CANCELLING = new Set(['entry', 'exit', 'trip', 'off']);
 
+// Students staying behind: "CLASSE 5G (ALUNNI NON IN GITA) - AULA 30", "(ALUNNI NON IN VIAGGIO
+// D'ISTRUZIONE) - ENTRATA POSTICIPATA". parseSummary keeps that part as the event's group.
+const STAYING = /\bNON\b/i;
+const forStayers = (v) => STAYING.test(v.group || '');
+
 /** Does this variation concern the class? "1QIN" also covers "1QIN gruppo 1/2" (see sameClassKey). */
 export function concernsClass(v, classKey) {
   if (v.classes.some((c) => sameClassKey(c, classKey))) return true;
@@ -401,12 +406,26 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
       });
 
     const lessonSlots = new Set(units.keys());
+    // The class's school hours that day: first to last lesson. An entry or exit empties them;
+    // what comes before or after (help desks, courses, meetings) stays.
+    const lessonIdx = allSlots.map((s, i) => (lessonSlots.has(s) ? i : -1)).filter((i) => i !== -1);
+    const inSchoolHours = (slot) => {
+      const i = allSlots.indexOf(slot);
+      return lessonIdx.length > 0 && i >= lessonIdx[0] && i <= lessonIdx[lessonIdx.length - 1];
+    };
     const overlays = []; // variations with real times, drawn over the lessons
     const extras = new Set(); // exact start times of events out of the lessons
 
     // 2. Variations for this date that concern the entity.
-    const todays = variations.filter((v) => v.date === date);
+    // Entries and exits last: they cancel what the other events put in the school hours,
+    // whichever order the calendar lists them in.
+    const leaves = (v) => v.kind === 'entry' || v.kind === 'exit';
+    const todays = variations.filter((v) => v.date === date).sort((a, b) => leaves(a) - leaves(b));
     const notes = [];
+    // Part of the class stays at school that day: the class page shows their day (their
+    // entry, exit and lessons), the trip of the others is a note, not every lesson cancelled.
+    const stayersDay = entity.type === 'class' && todays.some((v) => !v.cancelled && concernsMe(v) && forStayers(v));
+    const staysAtSchool = (classKey) => todays.some((v) => !v.cancelled && concernsClass(v, classKey) && forStayers(v));
 
     // When several variations hit the same slot the strongest outcome wins:
     // a cancellation beats a change; in a room, a class moving in beats the room being freed.
@@ -469,13 +488,19 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
           notes.push(publicVariation(v, allSlots));
           continue;
         }
+        if (v.kind === 'trip' && stayersDay && !forStayers(v)) {
+          notes.push(publicVariation(v, allSlots));
+          continue;
+        }
         if (over) {
           overlay();
           continue;
         }
         for (const slot of slots) {
-          // Entry/exit only matter where there is a lesson to skip.
-          if ((v.kind === 'entry' || v.kind === 'exit') && !units.has(slot)) continue;
+          // Entry/exit: everything in the school hours (lessons and what other events added
+          // there), nothing outside them (a help desk after the last lesson stays). Trips and
+          // suspensions: the class's own lessons.
+          if (leaves(v) ? !units.has(slot) || !inSchoolHours(slot) : CANCELLING.has(v.kind) && !lessonSlots.has(slot)) continue;
           touch(slot, v, CANCELLING.has(v.kind) ? 'cancelled' : 'changed', at);
         }
         continue;
@@ -501,6 +526,9 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
             // Substitution, room change or trip duty: the teacher is busy with the event's class.
             const occupant = v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0];
             touch(slot, v, 'changed', base && sameClass ? at : { ...at, occupant });
+          } else if (sameClass && v.kind === 'trip' && !forStayers(v) && staysAtSchool(entityKey(base.className))) {
+            // The class's trip, but some students stay: the lesson is held for them.
+            continue;
           } else if (sameClass) {
             // The class itself changes: gone (entry/exit/trip) → lesson not held. Its lesson
             // given to other teachers, this one not named → this teacher is absent (substituted).

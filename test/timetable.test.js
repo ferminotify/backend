@@ -228,6 +228,36 @@ test('buildWeek: late entry cancels earlier lessons, early exit later ones', () 
   assert.equal(status['12:05'], 'cancelled');
 });
 
+test('buildWeek: an early exit empties the school hours, events after them stay', () => {
+  const desk = ev('s', 'CLASSI 1^ - AULA 14 - SPORTELLO MATEMATICA - PROF. ESEMPIO', '13:00', '14:00');
+  const course = ev('c', 'CLASSE 1A - AULA 20 - CORSO DI RECUPERO - PROF. ESEMPIO', '15:30', '17:00');
+  const swap = ev('w', 'CLASSE 1A - AULA 46 - PROF. ESEMPIO', '12:00', '13:00');
+  const exit = ev('u', 'CLASSE 1A - USCITA ANTICIPATA', '11:00', '11:00');
+  for (const variations of [[exit, desk, course, swap], [desk, course, swap, exit]]) {
+    const { days } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
+    assert.equal(cellAt(days[0], '11:00')?.status, 'cancelled');
+    assert.equal(cellAt(days[0], '12:05')?.status, 'cancelled'); // changed, but the class has left
+    assert.equal(cellAt(days[0], '13:00')?.status, 'added'); // after the last lesson: whoever goes
+    assert.equal(days[0].cells.find((c) => c.start === '15:30')?.status, 'added');
+  }
+});
+
+test('buildWeek: a trip with students staying behind shows their day, the trip as a note', () => {
+  const variations = [
+    { ...ev('t', "CLASSI 1A, 1B - VIAGGIO D'ISTRUZIONE - PROFF. ESEMPIO", null, null), allDay: true },
+    ev('e', "CLASSE 1A (ALUNNI NON IN VIAGGIO D'ISTRUZIONE) - ENTRATA POSTICIPATA", '10:00', '10:00'),
+    ev('l', "CLASSE 1A (ALUNNI NON IN VIAGGIO D'ISTRUZIONE) - AULA 30 - PROF. ESEMPIO", '10:00', '11:00'),
+  ];
+  const { days } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
+  assert.equal(cellAt(days[0], '08:05')?.status, 'cancelled'); // they enter later
+  assert.equal(cellAt(days[0], '10:05')?.status, 'changed'); // their lesson in Aula 30
+  assert.equal(cellAt(days[0], '11:00')?.status, 'regular');
+  assert.deepEqual(days[0].notes.map((n) => n.uid), ['t']);
+  // The whole class leaving (nobody staying): every lesson cancelled, as before.
+  const all = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations: variations.slice(0, 1), days: monday });
+  assert.equal(cellAt(all.days[0], '11:00')?.status, 'cancelled');
+});
+
 test('buildWeek: a suspended lesson cancels its hours only', () => {
   const variations = [ev('s', 'CLASSE 1A - LEZIONE DI MATEMATICA SOSPESA', '09:00', '10:00')];
   const { days } = buildWeek({ entity: { type: 'class', key: '1A', name: '1A' }, table: table1A, variations, days: monday });
