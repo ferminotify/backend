@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { classifyKeyword, eventMatch, eventMatches, keywordWords } from '../utils/timetable/keywords.js';
 import { cleanOptIn, optInCategory } from '../utils/timetable/optIn.js';
 import { parseSummary } from '../utils/timetable/variations.js';
+import { jointCalendarName } from '../utils/timetable/merge.js';
 
 const lists = {
   classKeys: new Set(['1AIIN', '1BIIN', '3MENE', '3ITEL', '3MENEITEL', '5CIIN']),
@@ -19,11 +20,14 @@ test('keywordWords: symbols and accents of keywords are ignored', () => {
   assert.deepEqual(keywordWords('Rossi-Bianchi'), ['ROSSI', 'BIANCHI']);
 });
 
-test('keywords: class codes as /orario (named, written oddly, whole years, joint classes)', () => {
+test('keywords: class codes (named, written oddly, whole years; joint classes only as their own keyword)', () => {
   assert.ok(hit('5CIIN', 'CLASSE 5CIIN - AULA 94 - PROF. ROSSI'));
   assert.ok(hit('5ºCIIN', 'CLASSE 5CIIN - AULA 94'));
   assert.ok(hit('1AIIN', 'CLASSI PRIME - ASSEMBLEA IN AULA MAGNA'));
-  assert.ok(hit('3MENE', 'CLASSE 3MENEITEL - AULA 94'));
+  assert.ok(!hit('3MENE', 'CLASSE 3MENEITEL - AULA 94'));
+  assert.ok(hit('3MENEITEL', 'CLASSE 3MENEITEL - AULA 94'));
+  assert.equal(jointCalendarName(['5EELE', '5EET']), '5EELEET');
+  assert.equal(jointCalendarName(['3MENE', '3ITEL']), '3MENEITEL');
   assert.ok(!hit('1BIIN', 'CLASSE 1AIIN - AULA 94'));
 });
 
@@ -51,4 +55,14 @@ test('opt-in categories: help desks and the like for a whole year are set apart'
   assert.equal(how('1AIIN', 'CLASSE 1AIIN - SPORTELLO FISICA'), 'direct');
   assert.equal(how('1AIIN', 'CLASSI PRIME - ASSEMBLEA IN AULA MAGNA'), 'level');
   assert.deepEqual(cleanOptIn(['sportelli', 'x', 'sportelli', 'few']), ['sportelli']);
+});
+
+test('keywords: a joint class as the calendar writes it is the site\'s class', () => {
+  const lists = { classKeys: new Set(['5EELE', '5EET', '5EELEEET']), rooms: [], teacherNames: [] };
+  const k = classifyKeyword('5EELEET', lists);
+  assert.deepEqual(k.classKeys, ['5EELEEET']);
+  const ev = (summary) => ({ summary, ...parseSummary(summary) });
+  assert.ok(eventMatches(ev('CLASSE 5EELEET (STUDIO ASSISTITO) - AULA 381'), k));
+  assert.ok(eventMatches(ev('CLASSE 5EELEEET - AULA 381'), k));
+  assert.ok(!eventMatches(ev('CLASSE 5EELEET - AULA 381'), classifyKeyword('5EELE', lists)));
 });

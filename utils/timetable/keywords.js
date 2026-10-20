@@ -1,9 +1,10 @@
 // Keyword matching for notifications, with the timetable's rules (merge.js): a user's
 // keyword is usually their class or a teacher's surname, sometimes a room or any word.
 //
-// - class code ("5CIIN", "5ºCIIN", "3A."): the events /orario puts on that class, i.e. the
-//   class named in the title, whole years ("CLASSI PRIME", "TRIENNIO") and joint classes
-//   (3MENE gets 3MENEITEL's events);
+// - class code ("5CIIN", "5ºCIIN", "3A."): the class named in the title and whole years
+//   ("CLASSI PRIME", "TRIENNIO"). Joint classes only as keywords of their own: adding "3MENE"
+//   also adds "3MENEITEL" (routes/keyword.js, jointKeywords), and whoever removes it does not
+//   want those events;
 // - a teacher's surname ("ROSSI", "DEL MODELLO", "PIPPÒ"): the teacher named in the event,
 //   present or absent, as /orario reads names;
 // - a room ("AULA 94", "LAB 523"): events in that room;
@@ -15,7 +16,7 @@
 // category: the notifier sends it only to users who chose that category.
 import { getIndex } from './school.js';
 import { parseSummary } from './variations.js';
-import { concernsClass, concernsRoom, jointsOf, mentionsRoomText, mentionsTeacher, mentionsTeacherText, textWords } from './merge.js';
+import { concernsClass, concernsRoom, jointCalendarName, jointClasses, mentionsRoomText, mentionsTeacher, mentionsTeacherText, textWords } from './merge.js';
 import { optInCategory } from './optIn.js';
 import logger from '../logger.js';
 
@@ -46,7 +47,12 @@ export function classifyKeyword(kw, { classKeys, rooms, teacherNames }) {
   const joined = words.join('');
   const out = { classKeys: [], rooms: [], teachers: [], words };
   if (!words.length) return out;
-  if (classKeys.has(joined)) out.classKeys = [joined, ...jointsOf(joined, classKeys)];
+  if (classKeys.has(joined)) out.classKeys = [joined];
+  else {
+    // A joint class as the calendar writes it ("5EELEET" for the site's "5EELEEET")
+    const joint = [...jointClasses(classKeys)].find(([, parts]) => jointCalendarName(parts) === joined);
+    if (joint) out.classKeys = [joint[0]];
+  }
   // "AULA 94", "AULA94", "LAB 523": rooms whose name has the same words.
   out.rooms = rooms.filter((r) => keywordWords(r.name).join('') === joined);
   // Surname: the keyword is the first word(s) of the site name ("Rossi Mario"); homonyms all count.
@@ -77,6 +83,19 @@ export function eventMatch(v, k) {
 
 /** Does this event (parsed) concern the classified keyword, in any way? (/orario's view) */
 export const eventMatches = (v, k) => Boolean(eventMatch(v, k));
+
+/**
+ * The joint classes a class keyword is part of, to add with it, as the calendar writes
+ * them: "5EELE" → ["5EELEET"]. Not a class (surname, room, words): none.
+ * @returns {Promise<string[]>}
+ */
+export async function jointKeywords(kw) {
+  const joined = keywordWords(kw).join('');
+  const pub = await getIndex();
+  const classKeys = new Set(pub.class.map((c) => c.key.toUpperCase()));
+  if (!classKeys.has(joined)) return [];
+  return [...jointClasses(classKeys)].filter(([, parts]) => parts.includes(joined)).map(([, parts]) => jointCalendarName(parts));
+}
 
 /**
  * For each keyword, the uids of the events that concern it: `matches` always notified,

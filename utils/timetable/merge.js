@@ -253,6 +253,15 @@ export function jointClasses(known) {
   return out;
 }
 
+/**
+ * How the calendar writes a joint class: the second part without the year, and without the
+ * section letter too when both parts share it ("5EELE" + "5EET" → "5EELEET",
+ * "3MENE" + "3ITEL" → "3MENEITEL"); the site says "5EELEEET".
+ */
+export function jointCalendarName([a, b]) {
+  return a + b.slice(a[1] === b[1] ? 2 : 1);
+}
+
 /** Joint classes the class is part of: "3ITEL" → ["3MENEITEL"]. */
 export function jointsOf(classKey, known) {
   return [...jointClasses(known)].filter(([, parts]) => parts.includes(classKey)).map(([j]) => j);

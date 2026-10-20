@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'crypto';
 import { clientIp } from '../utils/clientIp.js';
 import { schoolLoginLimited } from '../utils/schoolLoginLimit.js';
 import logger from '../utils/logger.js';
@@ -16,6 +17,7 @@ import {
   SchoolLoginError,
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
+import { matchKeywords } from '../utils/timetable/keywords.js';
 import { optionalSchoolUser } from '../utils/schoolAccess.js';
 import { optionalSchoolTicket, sealTicket } from '../utils/schoolTicket.js';
 
@@ -129,6 +131,81 @@ async function liveSchoolSession(req, res, next) {
   next();
 }
 
+// Before the session middleware: the notifier's Bearer key is not a user token.
+// --- Event search: "Cerca eventi", dashboard, notifier ------------------------------------
+// One endpoint, so a keyword finds the same events everywhere (rules: utils/timetable/keywords.js).
+// The notifier (Bearer NOTIFICATION_API_KEY, as /user/push/notify) only skips the limits:
+// it asks for every user's keywords at once, every few minutes.
+const SEARCH_MAX_KEYWORDS = 20000;
+const PUBLIC_MAX_KEYWORDS = 20;
+const PUBLIC_WINDOW_MS = 60 * 1000;
+const PUBLIC_MAX_PER_WINDOW = 30;
+const searchHits = new Map(); // ip -> { count, reset }
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function isNotifier(req) {
+  const key = process.env.NOTIFICATION_API_KEY || '';
+  const expected = Buffer.from(`Bearer ${key}`);
+  const received = Buffer.from(req.headers.authorization || '');
+  return Boolean(key) && received.length === expected.length && crypto.timingSafeEqual(received, expected);
+}
+
+function searchLimited(ip) {
+  const now = Date.now();
+  if (searchHits.size > 10000) {
+    for (const [k, v] of searchHits) if (v.reset < now) searchHits.delete(k);
+  }
+  const entry = searchHits.get(ip);
+  if (!entry || entry.reset < now) {
+    searchHits.set(ip, { count: 1, reset: now + PUBLIC_WINDOW_MS });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > PUBLIC_MAX_PER_WINDOW;
+}
+
+/**
+ * POST { keywords?: [string], from?: 'YYYY-MM-DD', to?: 'YYYY-MM-DD' }  (days included,
+ * from today on; default: every upcoming day the calendar has)
+ *   → { events: [{uid, summary, date, start, end, allDay}],
+ *       matches: { keyword: [uid] }, optional: { keyword: { category: [uid] } }, source, stale }
+ * No keywords: every event of those days. With keywords: the events any of them finds,
+ * opt-in activities included (`optional`: help desks… reaching the keyword's class only through
+ * its year/group, utils/timetable/optIn.js; the notifier sends them only to who chose them).
+ * Public: only the public calendar's titles and uids, never the school's teacher list.
+ */
+router.post('/search', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const notifier = isNotifier(req);
+  if (!notifier && req.headers.authorization) return res.status(401).json({ error: 'Unauthorized' });
+  const { keywords = [], from, to } = req.body || {};
+  if (!Array.isArray(keywords)) return res.status(400).json({ error: 'keywords must be an array' });
+  if ((from != null && !ISO_DAY.test(from)) || (to != null && !ISO_DAY.test(to))) {
+    return res.status(400).json({ error: 'from/to must be YYYY-MM-DD' });
+  }
+  const max = notifier ? SEARCH_MAX_KEYWORDS : PUBLIC_MAX_KEYWORDS;
+  if (keywords.length > max) return res.status(400).json({ error: `At most ${max} keywords` });
+  if (!notifier && searchLimited(clientIp(req))) return res.status(429).json({ error: 'Troppe richieste, riprova tra poco' });
+
+  const kws = [...new Set(keywords.filter((k) => typeof k === 'string' && k.trim()).map((k) => k.slice(0, 100)))];
+  try {
+    const started = Date.now();
+    const { events: upcoming, source, stale } = await upcomingEvents();
+    const inRange = upcoming.filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
+    if (!kws.length) return res.json({ events: inRange, matches: {}, optional: {}, source, stale });
+    const { matches, optional } = await matchKeywords(inRange, kws);
+    const found = new Set([
+      ...Object.values(matches).flat(),
+      ...Object.values(optional).flatMap((cats) => Object.values(cats).flat()),
+    ]);
+    log.info('Events searched', { by: notifier ? 'notifier' : 'public', events: inRange.length, keywords: kws.length, found: found.size, ms: Date.now() - started });
+    res.json({ events: inRange.filter((e) => found.has(e.uid)), matches, optional, source, stale });
+  } catch (err) {
+    log.error('Event search failed', { error: err.message });
+    res.status(502).json({ error: 'Calendario non raggiungibile' });
+  }
+});
+
 router.use(optionalSchoolTicket, liveSchoolSession, optionalSchoolUser);
 
 /** Classes and rooms on the school timetable; also teachers for those allowed. */
@@ -158,18 +235,6 @@ router.get('/', async (req, res) => {
     if (err instanceof SchoolSessionExpired) return sessionExpired(res);
     log.error('Index failed', { error: err.message });
     res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
-  }
-});
-
-/** "Cerca eventi" (home, dashboard): the calendar events from today on. Public, no teachers. */
-router.get('/events', async (req, res) => {
-  try {
-    const { events, source } = await upcomingEvents();
-    res.set('Cache-Control', 'public, max-age=60');
-    res.json({ events, source });
-  } catch (err) {
-    log.error('Events failed', { error: err.message });
-    res.status(502).json({ error: 'Calendario non raggiungibile' });
   }
 });
 
