@@ -1,5 +1,6 @@
 import express from 'express';
 import { clientIp } from '../utils/clientIp.js';
+import { schoolLoginLimited } from '../utils/schoolLoginLimit.js';
 import logger from '../utils/logger.js';
 import {
   ALL_TYPES,
@@ -52,28 +53,6 @@ async function withOwnSession(req, fn) {
 
 // --- "Accedi con Moodle" ---------------------------------------------------------------
 
-// Each attempt is a login on the school site: limit them per IP and per username so this
-// endpoint cannot be used to guess school passwords.
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_PER_IP = 10;
-const LOGIN_MAX_PER_USER = 5;
-const loginAttempts = new Map(); // key -> { count, reset }
-
-function tooManyAttempts(key, max) {
-  const now = Date.now();
-  if (loginAttempts.size > 10000) {
-    for (const [k, v] of loginAttempts) if (v.reset < now) loginAttempts.delete(k);
-  }
-  const entry = loginAttempts.get(key);
-  if (!entry || entry.reset < now) {
-    loginAttempts.set(key, { count: 1, reset: now + LOGIN_WINDOW_MS });
-    return false;
-  }
-  entry.count += 1;
-  return entry.count > max;
-}
-
-
 router.post('/school-login', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
@@ -81,7 +60,7 @@ router.post('/school-login', async (req, res) => {
   if (!username || !password || username.length > 150 || password.length > 256) {
     return res.status(400).json({ error: 'Inserisci nome utente e password' });
   }
-  if (tooManyAttempts(`ip:${clientIp(req)}`, LOGIN_MAX_PER_IP) || tooManyAttempts(`u:${username.toLowerCase()}`, LOGIN_MAX_PER_USER)) {
+  if (schoolLoginLimited(clientIp(req), username)) {
     return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
   }
 

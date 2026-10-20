@@ -21,6 +21,11 @@ import {
 } from '../utils/utils.js';
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
+import { clientIp } from '../utils/clientIp.js';
+import { schoolLoginLimited } from '../utils/schoolLoginLimit.js';
+import { sealTicket } from '../utils/schoolTicket.js';
+import { refuseUnconfirmed } from '../utils/confirmReminder.js';
+import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
 dotenv.config();
 
 const router = express.Router();
@@ -211,15 +216,38 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
     // Google-only accounts have no password set.
-    if (!user.password) {
-        log.warn('Login failed - account has no password (Google-only)', { id: user.id, email: user.email, ip: req.ip });
-        return res.status(401).json({ error: 'Questo account usa l\'accesso con Google.', code: 'google_only' });
+    // Moodle accounts: the password is checked on the school site, never stored here
+    // (an account may also have its own password, set later with "Password dimenticata?").
+    let ticket = null;
+    if (user.school_username && !(user.password && await bcrypt.compare(password, user.password))) {
+        if (schoolLoginLimited(clientIp(req), user.school_username)) {
+            return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
+        }
+        try {
+            ticket = sealTicket(await loginWith(user.school_username, password));
+        } catch (err) {
+            if (err instanceof SchoolLoginError) {
+                log.warn('Login failed - invalid Moodle password', { id: user.id, ip: req.ip });
+                return res.status(401).json({ error: 'Invalid credentials' });
+            }
+            log.error('Login failed - school site unreachable', { id: user.id, error: err.message });
+            return res.status(502).json({ error: 'Sito della scuola non raggiungibile, riprova più tardi' });
+        }
+    } else {
+        // Google-only accounts have no password set.
+        if (!user.password) {
+            log.warn('Login failed - account has no password (Google-only)', { id: user.id, email: user.email, ip: req.ip });
+            return res.status(401).json({ error: 'Questo account usa l\'accesso con Google.', code: 'google_only' });
+        }
+        const match = await bcrypt.compare(password, user.password);
+        if (!match) {
+            log.warn('Login failed - invalid password', { id: user.id, email: user.email, ip: req.ip });
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
     }
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-        log.warn('Login failed - invalid password', { id: user.id, email: user.email, ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
-    }
+
+    // Moodle accounts enter only with a confirmed email (as "Accedi con Moodle").
+    if (user.school_username && (user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
 
     // generate JWT token of 1 min
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
@@ -251,7 +279,7 @@ router.post('/login', async (req, res) => {
         maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     });
     log.info('Login success', { id: user.id, email: user.email, ip: req.ip });
-    res.json({ token, onboarding: !user.onboarding });
+    res.json({ token, onboarding: !user.onboarding, ...(ticket ? { ticket } : {}) });
     // update onboarding set to true after first login
     await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [user.id]);
     } catch (err) {

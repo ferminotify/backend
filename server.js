@@ -8,6 +8,7 @@ import userRouter from './routes/user.js';
 import pushRouter from './routes/push.js';
 import mediaRouter from './routes/media.js';
 import timetableRouter from './routes/timetable.js';
+import moodleRouter from './routes/moodle.js';
 import reportRouter from './routes/report.js';
 import cookieParser from 'cookie-parser';
 
@@ -67,6 +68,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/timetable', timetableRouter);
 
 app.use('/user/auth/google', googleRouter);
+
+app.use('/user/auth/moodle', moodleRouter);
 
 app.use('/user/auth', authRouter);
 

@@ -411,7 +411,7 @@ test('mentionsTeacher: surname, whole words only', () => {
   assert.ok(mentionsTeacher(['Rossi'], 'Rossi Mario'));
   assert.ok(mentionsTeacher(['Del Modello'], 'Del Modello Anna'));
   assert.ok(mentionsTeacher(['Mario Rossi'], 'Rossi Mario'));
-  assert.ok(mentionsTeacher(["Cracò"], 'Craco Luca'));
+  assert.ok(mentionsTeacher(["Pippò"], 'Pippo Luca'));
   assert.ok(!mentionsTeacher(['Rossi'], 'Rossini Mario'));
   assert.ok(!mentionsTeacher(['Modello'], 'Del Modello Anna'));
   assert.ok(!mentionsTeacher([], 'Rossi Mario'));

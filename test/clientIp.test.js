@@ -14,3 +14,18 @@ test('clientIp: X-Forwarded-For only from our proxy, its last entry', () => {
   // Proxy without the header: the proxy's address.
   assert.equal(clientIp(req('10.0.0.2')), '10.0.0.2');
 });
+
+test('clientIp: CLIENT_IP_HEADER from the hosting proxy chain', () => {
+  process.env.CLIENT_IP_HEADER = 'True-Client-IP';
+  try {
+    const r = req('10.0.0.2', '203.0.113.7, 104.16.0.1');
+    r.headers['true-client-ip'] = '203.0.113.7';
+    assert.equal(clientIp(r), '203.0.113.7');
+    assert.equal(clientIp(req('10.0.0.2', '203.0.113.7, 104.16.0.1')), '104.16.0.1'); // header missing: as before
+    const direct = req('198.51.100.9');
+    direct.headers['true-client-ip'] = '1.2.3.4';
+    assert.equal(clientIp(direct), '198.51.100.9'); // not through the proxy: ignored
+  } finally {
+    delete process.env.CLIENT_IP_HEADER;
+  }
+});

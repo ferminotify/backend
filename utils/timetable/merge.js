@@ -96,7 +96,7 @@ export function concernsRoom(v, room) {
   return Boolean(v.room) && sameRoom(v.room, room.name);
 }
 
-// Teacher names, word by word: "Del Modello" → ["DEL", "MODELLO"], "Cracò" → ["CRACO"].
+// Teacher names, word by word: "Del Modello" → ["DEL", "MODELLO"], "Pippò" → ["PIPPO"].
 const nameWords = (s) =>
   String(s || '')
     .toUpperCase()
