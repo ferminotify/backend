@@ -27,23 +27,6 @@ router.post('/notification-preferences', async (req, res) => {
     }
 });
 
-router.post('/toggle-probable-notifications', async (req, res) => {
-    const userId = req.user.id;
-
-    try {
-        const result = await pool.query(
-            'UPDATE subscribers SET include_similar_tags = NOT include_similar_tags WHERE id = $1 RETURNING include_similar_tags',
-            [userId]
-        );
-        const newValue = result.rows[0].include_similar_tags;
-        log.info('Toggled include_similar_tags', { userId, include_similar_tags: newValue });
-        res.status(200).json({ message: 'Probable notifications preference toggled successfully.', include_similar_tags: newValue });
-    } catch (error) {
-        log.error('Error toggling probable notifications preference', { userId, error: error.stack || error });
-        res.status(500).json({ message: 'Internal server error.' });
-    }
-});
-
 // Opt-in categories (utils/timetable/optIn.js): the list, and the user's choice.
 router.get('/notify-optin', (req, res) => {
     res.json({
