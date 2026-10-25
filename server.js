@@ -10,6 +10,7 @@ import mediaRouter from './routes/media.js';
 import timetableRouter from './routes/timetable.js';
 import moodleRouter from './routes/moodle.js';
 import reportRouter from './routes/report.js';
+import unsubscribeRouter from './routes/unsubscribe.js';
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
@@ -64,6 +65,8 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.use(express.urlencoded({ extended: true }));
+
+app.use('/unsubscribe', unsubscribeRouter);
 
 app.use('/timetable', timetableRouter);
 
