@@ -4,6 +4,7 @@ import { classifyKeyword, eventMatch, eventMatches, keywordWords } from '../util
 import { cleanOptIn, optInCategory } from '../utils/timetable/optIn.js';
 import { parseSummary } from '../utils/timetable/variations.js';
 import { jointCalendarName } from '../utils/timetable/merge.js';
+import { surnamesFromTitles, schoolYearStart } from '../utils/timetable/calendarNames.js';
 
 const lists = {
   classKeys: new Set(['1AIIN', '1BIIN', '3MENE', '3ITEL', '3MENEITEL', '5CIIN']),
@@ -65,4 +66,21 @@ test('keywords: a joint class as the calendar writes it is the site\'s class', (
   assert.ok(eventMatches(ev('CLASSE 5EELEET (STUDIO ASSISTITO) - AULA 381'), k));
   assert.ok(eventMatches(ev('CLASSE 5EELEEET - AULA 381'), k));
   assert.ok(!eventMatches(ev('CLASSE 5EELEET - AULA 381'), classifyKeyword('5EELE', lists)));
+});
+
+test('calendar surnames: only after a teacher title, seen twice, initials dropped', () => {
+  const titles = [
+    'CLASSE 1A - AULA 94 - PROF. ESEMPIO',
+    'CLASSE 2B - AULA 12 - PROF. ESEMPIO',
+    'CLASSE 3C - AULA 4 - PROFF. FITTIZIO, IPOTETICO (PROF.ssa DEL MODELLO: ASSENTE)',
+    'CLASSE 3D - AULA 5 - PROF. FITTIZIO (PROF.ssa DEL MODELLO ASSENTE)',
+    'CLASSE 4E - AULA 6 - PROF. CAMPIONE F.',
+    'CLASSE 4F - AULA 7 - PROF. CAMPIONE',
+    'AULA 15 - PEER TUTORING MATEMATICA - TUTOR STUDENTE (3A) - CLASSE 2A',
+    'AULA 16 - PEER TUTORING MATEMATICA - TUTOR STUDENTE (3A) - CLASSE 2B',
+    'CLASSE 5A - AULA 8 - PROF. UNAVOLTA',
+  ];
+  assert.deepEqual(surnamesFromTitles(titles), ['CAMPIONE', 'DEL MODELLO', 'ESEMPIO', 'FITTIZIO']);
+  assert.equal(schoolYearStart('2026-10-25'), '2026-09-01');
+  assert.equal(schoolYearStart('2027-02-10'), '2026-09-01');
 });

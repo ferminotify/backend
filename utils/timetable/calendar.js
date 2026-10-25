@@ -77,6 +77,12 @@ async function listEvents(params) {
   return items;
 }
 
+/** Every event between two days (YYYY-MM-DD, included), read in full: for occasional reads. */
+export async function calendarEventsBetween(from, to) {
+  const items = await listEvents({ timeMin: `${from}T00:00:00Z`, timeMax: `${addDays(to, 1)}T00:00:00Z` });
+  return items.flatMap(toEvents);
+}
+
 // API items of the current window, by id.
 let state = { from: null, to: null, items: new Map(), fullAt: 0, syncedAt: 0 };
 

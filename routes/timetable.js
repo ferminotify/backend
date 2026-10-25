@@ -18,17 +18,20 @@ import {
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
 import { matchKeywords } from '../utils/timetable/keywords.js';
+import { calendarSurnames } from '../utils/timetable/calendarNames.js';
 import { optionalSchoolUser } from '../utils/schoolAccess.js';
 import { optionalSchoolTicket, sealTicket } from '../utils/schoolTicket.js';
 
 const router = express.Router();
 const log = logger.child('timetable');
 
-// Teachers are shown to:
+// Teachers (the school's reserved area: names and timetables) are shown to:
 // - users with their own school (Moodle) session: logged in with Moodle on /orario, or
 //   with a Moodle account (utils/schoolTicket.js), fetched with that session;
-// - any other confirmed Fermi Notify account (utils/schoolAccess.js), fetched with the
-//   service account from the env.
+// - confirmed @fermimn.edu.it Fermi Notify accounts (utils/schoolAccess.js), fetched with
+//   the service account from the env.
+// Everyone else: the surnames the public calendar prints, for keyword suggestions only
+// (utils/timetable/calendarNames.js).
 const canSeeTeachers = (req) => Boolean(req.schoolSession || req.schoolUser);
 
 // Public, read-only. Short browser cache: variations change during the day.
@@ -228,6 +231,8 @@ router.get('/', async (req, res) => {
       rooms: list(pub.room),
       // null = not available to this user; [] = allowed but the school site failed
       teachers: canSeeTeachers(req) ? list(priv?.teacher) : null,
+      // Public: surnames printed in the calendar's titles (keyword suggestions)
+      calendarTeachers: calendarSurnames(),
       schoolUser: Boolean(req.schoolUser),
       schoolSession: Boolean(session),
     });
@@ -278,7 +283,7 @@ router.get('/:type/:ref', async (req, res) => {
   const type = { classe: 'class', aula: 'room', docente: 'teacher' }[req.params.type] || req.params.type;
   if (!ALL_TYPES.includes(type)) return res.status(404).json({ error: 'Tipo non valido' });
   if (type === 'teacher' && !canSeeTeachers(req)) {
-    return res.status(403).json({ error: 'Orario docenti disponibile solo accedendo a Fermi Notify o con Moodle' });
+    return res.status(403).json({ error: 'Orario docenti disponibile solo accedendo con Moodle o con un account @fermimn.edu.it' });
   }
 
   try {
