@@ -246,8 +246,8 @@ router.post('/login', async (req, res) => {
         }
     }
 
-    // Moodle accounts enter only with a confirmed email (as "Accedi con Moodle").
-    if (user.school_username && (user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
+    // Only confirmed emails enter (link in the signup email); the link is sent again.
+    if ((user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
 
     // generate JWT token of 1 min
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {

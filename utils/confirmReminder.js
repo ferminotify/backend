@@ -1,4 +1,4 @@
-// Moodle accounts enter only once their email is confirmed (the link in the signup email).
+// Accounts enter only once their email is confirmed (the link in the signup email).
 // A login before that is refused, and the confirmation email sent again (not too often:
 // the login form must not be usable to flood an inbox).
 import pool from '../db.js';

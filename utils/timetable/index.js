@@ -1,9 +1,9 @@
 // Timetable + variations for one class or room, for a given week.
 import { findEntity, getIndex, getTable, sessionSeesTeachers, ENTITY_TYPES, ALL_TYPES } from './school.js';
 import { hasCredentials, SchoolSessionExpired } from './schoolSession.js';
-import { getVariations, parseSummary } from './variations.js';
+import { getVariations } from './variations.js';
 import { assessSummary, UNCERTAIN_BELOW } from './confidence.js';
-import { buildWeek, concernsClass, concernsRoom, jointClasses, jointsOf, mentionsTeacher, teacherContext, variationSlots, SCHOOL_SLOTS } from './merge.js';
+import { buildWeek, jointClasses, jointsOf, teacherContext } from './merge.js';
 
 export { ENTITY_TYPES, ALL_TYPES, getIndex, sessionSeesTeachers, hasCredentials, SchoolSessionExpired };
 export { loginWith, logoutSession, SchoolLoginError } from './schoolSession.js';
@@ -163,105 +163,6 @@ function withJointLessons(table, jointTable, otherPart) {
     weekdays: [...new Set([...table.weekdays, ...jointTable.weekdays])].sort(),
     lessons: [...table.lessons, ...extra],
   };
-}
-
-const PREVIEW_MAX = 6;
-
-/**
- * Test page (/orario/test): how an event title is read and what it does to the timetable.
- * Applies only this one (fake) event to the real timetables of the entities it concerns.
- * @param {{summary:string, date:string, start?:string, end?:string, allDay?:boolean}} ev
- * @param {{authed?:boolean, session?:object}} opts  teachers only for callers who may see them
- */
-export async function testVariation(ev, { authed = false, session } = {}) {
-  const useAuthed = authed && Boolean(session || hasCredentials());
-  const raw = {
-    uid: 'test',
-    summary: ev.summary,
-    date: ev.date,
-    start: ev.allDay ? null : ev.start,
-    end: ev.allDay ? null : ev.end || ev.start,
-    allDay: Boolean(ev.allDay),
-    ...parseSummary(ev.summary),
-  };
-  const [v] = await withReadings([raw]);
-  const index = await getIndex(useAuthed ? { authed: true, session } : {});
-  // With teachers known, also check the names (not done for the shared readings).
-  if (index.teacher?.length) {
-    const r = assessSummary(raw.summary, raw, { classes: index.class, rooms: index.room, teachers: index.teacher });
-    v.reading = { ...v.reading, score: r.score, issues: r.issues };
-  }
-  const matches = [
-    ...(index.class || []).filter((c) => concernsClass(v, c.key)).map((e) => ({ ...e, type: 'class' })),
-    ...(index.room || []).filter((r) => concernsRoom(v, r)).map((e) => ({ ...e, type: 'room' })),
-    ...(useAuthed ? index.teacher || [] : [])
-      .filter((t) => mentionsTeacher(v.teachers, t.name) || mentionsTeacher(v.absent, t.name))
-      .map((e) => ({ ...e, type: 'teacher' })),
-  ];
-
-  const weekday = new Date(`${ev.date}T00:00:00Z`).getUTCDay() || 7;
-  const previews = await Promise.all(
-    matches.slice(0, PREVIEW_MAX).map(async (entity) => {
-      const { table } = await getTable(entity.type, entity.id, { authed: useAuthed, session });
-      const week = buildWeek({ entity, table, variations: [v], days: [{ date: ev.date, weekday, published: true }] });
-      const day = week.days[0];
-      return {
-        entity: { type: entity.type, key: entity.key, name: entity.name },
-        times: week.times,
-        cells: [...day.cells.filter((c) => c.variations.length), ...day.overlays], // overlays: real times over lessons
-        notes: day.notes,
-      };
-    })
-  );
-
-  const { uid, summary, date, reading, ...parsed } = v;
-  return {
-    parsed,
-    reading,
-    uncertainBelow: UNCERTAIN_BELOW,
-    slots: variationSlots(v, SCHOOL_SLOTS),
-    matches: matches.map(({ type, key, name }) => ({ type, key, name })),
-    previews,
-    more: Math.max(0, matches.length - PREVIEW_MAX),
-  };
-}
-
-/**
- * Test page examples: a few calendar events picked at random, with titles that differ in
- * shape (kind and wording, ignoring class codes, rooms and numbers) so each shows something new.
- */
-export async function testExamples(count = 5) {
-  const { variations } = await getVariations();
-  const shape = (v) =>
-    `${v.kind}|${v.summary
-      .toUpperCase()
-      .replace(/\b\d+[A-Z]*\b/g, '#')
-      .replace(/[^A-Z#]+/g, ' ')
-      .trim()
-      .split(' ')
-      .slice(0, 3)
-      .join(' ')}`;
-  const pool = [...variations].filter((v) => v.summary?.trim() && v.summary.length <= 200);
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  // One per shape, alternating kinds: changes are most events, the others would rarely show.
-  const byKind = new Map();
-  const seen = new Set();
-  for (const v of pool) {
-    const k = shape(v);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    if (!byKind.has(v.kind)) byKind.set(v.kind, []);
-    byKind.get(v.kind).push(v);
-  }
-  const out = [];
-  const lists = [...byKind.values()];
-  for (let i = 0; out.length < count && lists.some((l) => l.length > i); i++) {
-    for (const l of lists) if (l[i] && out.length < count) out.push(l[i]);
-  }
-  return out.map((v) => ({ summary: v.summary.trim(), date: v.date, start: v.start || null, end: v.end || null, allDay: Boolean(v.allDay) }));
 }
 
 /**

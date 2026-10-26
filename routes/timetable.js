@@ -11,8 +11,6 @@ import {
   loginWith,
   logoutSession,
   sessionSeesTeachers,
-  testVariation,
-  testExamples,
   upcomingEvents,
   SchoolLoginError,
   SchoolSessionExpired,
@@ -239,41 +237,6 @@ router.get('/', async (req, res) => {
   } catch (err) {
     if (err instanceof SchoolSessionExpired) return sessionExpired(res);
     log.error('Index failed', { error: err.message });
-    res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
-  }
-});
-
-/** Test page: random calendar events to try. */
-router.get('/test/examples', async (req, res) => {
-  try {
-    res.set('Cache-Control', 'no-store');
-    res.json({ examples: await testExamples() });
-  } catch (err) {
-    log.error('Examples failed', { error: err.message });
-    res.status(502).json({ error: 'Calendario non raggiungibile' });
-  }
-});
-
-/** Test page: how an event title is read and applied. ?summary=&date=YYYY-MM-DD&start=HH:MM&end=HH:MM */
-router.get('/test', async (req, res) => {
-  const summary = typeof req.query.summary === 'string' ? req.query.summary.trim().slice(0, 500) : '';
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : null;
-  const time = (t) => (/^\d{2}:\d{2}$/.test(t) ? t : null);
-  const start = time(req.query.start);
-  const allDay = req.query.allDay === '1' || !start;
-  if (!summary || !date) return res.status(400).json({ error: 'Servono testo dell’evento e data' });
-  try {
-    const out = await withOwnSession(req, () =>
-      testVariation(
-        { summary, date, start, end: time(req.query.end) || start, allDay },
-        { authed: canSeeTeachers(req), session: req.schoolSession || undefined }
-      )
-    );
-    res.set('Cache-Control', 'no-store');
-    res.json(out);
-  } catch (err) {
-    if (err instanceof SchoolSessionExpired) return sessionExpired(res);
-    log.error('Test failed', { error: err.message });
     res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
   }
 });

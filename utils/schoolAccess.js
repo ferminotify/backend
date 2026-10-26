@@ -3,8 +3,9 @@
 // with the service account from the env (routes/timetable.js). Everyone else gets only the
 // surnames the public calendar prints (utils/timetable/calendarNames.js).
 //
-// The JWT alone is not enough: /login issues tokens to unconfirmed accounts too, so
-// anyone could register "someone@fermimn.edu.it" without owning it. The account is
+// The JWT alone is not enough: tokens issued before confirmation was required for /login
+// may belong to unconfirmed accounts (anyone could register "someone@fermimn.edu.it"
+// without owning it). The account is
 // re-read from the DB and must be confirmed (notifications > -1; Google sign-ups are
 // created confirmed, and only with a Google-verified email).
 import jwt from 'jsonwebtoken';
