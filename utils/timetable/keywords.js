@@ -6,7 +6,8 @@
 //   also adds "3MENEITEL" (routes/keyword.js, jointKeywords), and whoever removes it does not
 //   want those events;
 // - a teacher's surname ("ROSSI", "DEL MODELLO", "PIPPÒ"): the teacher named in the event,
-//   present or absent, as /orario reads names;
+//   present or absent, as /orario reads names. Surname and first name ("VIGHI GIULIA") tell
+//   homonyms apart: "VIGHI G." and a bare "VIGHI" count, "VIGHI C." does not;
 // - a room ("AULA 94", "LAB 523"): events in that room;
 // - always also the keyword's words in the title, so nothing the plain word search found
 //   before is lost (symbols and accents aside, now ignored on both sides).
@@ -16,7 +17,7 @@
 // category: the notifier sends it only to users who chose that category.
 import { getIndex } from './school.js';
 import { parseSummary } from './variations.js';
-import { concernsClass, concernsRoom, jointCalendarName, jointClasses, mentionsRoomText, mentionsTeacher, mentionsTeacherText, textWords } from './merge.js';
+import { concernsClass, concernsRoom, jointCalendarName, jointClasses, mentionsRoomText, mentionsTeacher, mentionsTeacherText, teacherContext, textWords } from './merge.js';
 import { optInCategory } from './optIn.js';
 import logger from '../logger.js';
 
@@ -40,12 +41,13 @@ export function titleHasWords(summary, words) {
 
 /**
  * What a keyword stands for, given the school's lists.
- * @returns {{ classKeys: string[], rooms: object[], teachers: string[], words: string[] }}
+ * `teachers` (teacherContext of teacherNames) may be passed when classifying many keywords.
+ * @returns {{ classKeys: string[], rooms: object[], teachers: string[], words: string[], teacherCtx: object }}
  */
-export function classifyKeyword(kw, { classKeys, rooms, teacherNames }) {
+export function classifyKeyword(kw, { classKeys, rooms, teacherNames, teachers = null }) {
   const words = keywordWords(kw);
   const joined = words.join('');
-  const out = { classKeys: [], rooms: [], teachers: [], words };
+  const out = { classKeys: [], rooms: [], teachers: [], words, teacherCtx: teachers || teacherContext(teacherNames) };
   if (!words.length) return out;
   if (classKeys.has(joined)) out.classKeys = [joined];
   else {
@@ -55,11 +57,12 @@ export function classifyKeyword(kw, { classKeys, rooms, teacherNames }) {
   }
   // "AULA 94", "AULA94", "LAB 523": rooms whose name has the same words.
   out.rooms = rooms.filter((r) => keywordWords(r.name).join('') === joined);
-  // Surname: the keyword is the first word(s) of the site name ("Rossi Mario"); homonyms all count.
+  // Surname: the keyword is the first word(s) of the site name ("Rossi Mario"); homonyms all
+  // count. The whole name ("Vighi Giulia") is that teacher only.
   if (!out.classKeys.length && joined.length >= 3) {
     out.teachers = teacherNames.filter((n) => {
       const full = keywordWords(n);
-      return words.length < full.length && words.every((x, i) => full[i] === x);
+      return words.length <= full.length && words.every((x, i) => full[i] === x);
     });
   }
   return out;
@@ -74,7 +77,7 @@ export function eventMatch(v, k) {
   const named = { ...v, levels: [] };
   if (k.classKeys.some((c) => concernsClass(named, c))) return 'direct';
   if (k.rooms.some((r) => concernsRoom(v, r) || mentionsRoomText(v.summary, r.name))) return 'direct';
-  if (k.teachers.some((t) => mentionsTeacher(v.teachers, t) || mentionsTeacher(v.absent, t) || mentionsTeacherText(v.summary, t))) {
+  if (k.teachers.some((t) => mentionsTeacher(v.teachers, t) || mentionsTeacher(v.absent, t) || mentionsTeacherText(v.summary, t, k.teacherCtx))) {
     return 'direct';
   }
   if (k.classKeys.some((c) => concernsClass(v, c))) return 'level';
@@ -116,6 +119,7 @@ export async function matchKeywords(events, keywords) {
     rooms: pub.room,
     teacherNames: (priv?.teacher || []).map((t) => t.name).filter((n) => !/\d/.test(n)),
   };
+  lists.teachers = teacherContext(lists.teacherNames);
   const parsed = events
     .filter((e) => e && typeof e.uid === 'string' && typeof e.summary === 'string')
     .map((e) => ({ uid: e.uid, summary: e.summary, ...parseSummary(e.summary), optIn: optInCategory(e.summary) }));

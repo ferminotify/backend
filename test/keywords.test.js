@@ -42,6 +42,20 @@ test('keywords: surnames, rooms and plain words', () => {
   assert.ok(!hit('AULA 9', 'CLASSE 5CIIN - AULA 94'));
 });
 
+test('keywords: the whole name tells homonyms apart', () => {
+  const homonyms = { ...lists, teacherNames: ['Vighi Cristina', 'Vighi Giulia'] };
+  const hitH = (kw, summary) => eventMatches(ev(summary), classifyKeyword(kw, homonyms));
+  assert.deepEqual(classifyKeyword('VIGHI GIULIA', homonyms).teachers, ['Vighi Giulia']);
+  assert.ok(hitH('VIGHI GIULIA', 'CLASSI 4^ IT - AULA 14 - SPORTELLO MATEMATICA - PROF. VIGHI G.'));
+  assert.ok(hitH('VIGHI GIULIA', 'CLASSE 4A - PROF.SSA VIGHI GIULIA'));
+  assert.ok(hitH('VIGHI GIULIA', 'CLASSE 4A - AULA IMMERSIVA - PROF. SSA VIGHI'));
+  assert.ok(hitH('VIGHI GIULIA', 'CLASSE 5CIIN - AULA 13 - PROF. ROSSI (PROF. VIGHI G.: ASSENTE)'));
+  assert.ok(!hitH('VIGHI GIULIA', 'CLASSE 2AEL - PROF. SSA VIGHI C.'));
+  assert.ok(!hitH('VIGHI GIULIA', 'CLASSE 2AEL - PROF.SSA VIGHI CRISTINA'));
+  assert.ok(hitH('VIGHI', 'CLASSE 2AEL - PROF. SSA VIGHI C.'));
+  assert.ok(hitH('VIGHI', 'CLASSI 4^ IT - SPORTELLO MATEMATICA - PROF. VIGHI G.'));
+});
+
 test('opt-in categories: help desks and the like for a whole year are set apart', () => {
   const how = (kw, summary) => eventMatch(ev(summary), classifyKeyword(kw, lists));
   assert.equal(optInCategory('CLASSI 1^ IT - AULA 10 - SPORTELLO FISICA - PROF. ROSSI'), 'sportelli');
