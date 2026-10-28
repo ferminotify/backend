@@ -1,5 +1,3 @@
-// TODO: unsubscribe, rates limiting
-
 import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -7,7 +5,7 @@ import pool from '../db.js';
 import dotenv from 'dotenv';
 import logger from '../utils/logger.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
-import { sendMailAsync } from '../utils/email.js';
+import { sendMailAsync, unsubscribeHeaders } from '../utils/email.js';
 import { API_URL, URL } from '../utils/config.js';
 import {
     getUserEmailWithTelegramID,
@@ -21,6 +19,10 @@ import {
 } from '../utils/utils.js';
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
+import { clientIp, schoolLoginLimited } from '../utils/limiter.js';
+import { teacherTicket } from '../utils/schoolTicket.js';
+import { refuseUnconfirmed } from '../utils/confirmReminder.js';
+import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
 dotenv.config();
 
 const router = express.Router();
@@ -68,7 +70,7 @@ router.put('/register', async (req, res) => {
     // If email already exists: if confirmed (notifications > -1) => error, else resend confirmation email and return 200
     try {
         const existing = await pool.query(
-            'SELECT id, email, telegram, notifications, unsub_token, name as db_name, gender as db_gender FROM subscribers WHERE email = $1',
+            'SELECT id, email, telegram, notifications, unsub_token, name as db_name, gender as db_gender FROM subscribers WHERE lower(email) = lower($1)',
             [email]
         );
         if (existing.rowCount > 0) {
@@ -82,9 +84,10 @@ router.put('/register', async (req, res) => {
                 await client.query('BEGIN');
                 const hashed = await bcrypt.hash(password, 10);
                 const upd = await client.query(
-                    'UPDATE subscribers SET name = $1, surname = $2, password = $3, gender = $4 WHERE id = $5 RETURNING id, email, unsub_token, telegram, name as db_name, gender as db_gender',
+                    'UPDATE subscribers SET name = $1, surname = $2, password = $3, gender = $4, school_username = NULL WHERE id = $5 RETURNING id, email, unsub_token, telegram, name as db_name, gender as db_gender',
                     [name, surname, hashed, gender, row.id]
                 );
+                await client.query('DELETE FROM refresh_tokens WHERE sub_id = $1', [row.id]);
                 const updated = upd.rows[0];
                 const code = updated.telegram;
                 const confirm_link = `${URL}/user/auth/register/confirmation/${code}`;
@@ -99,7 +102,7 @@ router.put('/register', async (req, res) => {
                     `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table border=0 cellpadding=0 cellspacing=0 style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src=${API_URL}/email/v3/logo-long-allmuted-trasp.png style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table border=0 cellpadding=0 cellspacing=0 style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"><tr><td><h2 style="margin:10px 0">Ciao ${safeResendName}!</h2><tr><td style=text-align:left><p style=line-height:1.3>Per completare la registrazione, conferma il tuo indirizzo email:<tr><td style="padding:15px 0"><a href=${confirm_link} style="font-size:14px;letter-spacing:1.2px;padding:13px 17px;font-weight:600;background-color:#004a77;border-radius:10px;color:#fff;text-decoration:none"target=_blank>Conferma email</a><tr><td style=text-align:left><p style=line-height:1.3>Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo.<tr><td style=text-align:left><p style=line-height:1.3>A presto!</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Il bottone non funziona? Conferma l'email attraverso il seguente link: <a href=${confirm_link} style=color:#004a77 target=_blank>${confirm_link}</a>.<p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src=${API_URL}/email/v3/icon-allmuted.png style=height:35px;margin-bottom:5px alt="Fermi Notify"></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrat${resendGender == "M" ? "o" : resendGender == "F" ? "a" : "ə"} a <i>Fermi Notify</i>. Se non sei stato tu, ignora questa email.</table></main><html>`,
                     `Ciao ${resendName}! Per completare la registrazione, conferma il tuo indirizzo email: ${confirm_link}. Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo. A presto!`,
                     {
-                        "List-Unsubscribe": `<mailto:unsubscribe@fn.lkev.in?subject=Unsubscribe%20%3A%28&id=${updated.id}&token=${updated.unsub_token}&email=${updated.email}>, <${URL}/auth/unsubscribe?id=${updated.id}&token=${updated.unsub_token}&email=${updated.email}>`
+                        ...unsubscribeHeaders({ id: updated.id, unsub_token: updated.unsub_token })
                     }
                 );
 
@@ -139,7 +142,7 @@ router.put('/register', async (req, res) => {
             `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table border=0 cellpadding=0 cellspacing=0 style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src=${API_URL}/email/v3/logo-long-allmuted-trasp.png style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table border=0 cellpadding=0 cellspacing=0 style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"><tr><td><h2 style="margin:10px 0">Ciao ${safeName}!</h2><tr><td style=text-align:left><p style=line-height:1.3>Per completare la registrazione, conferma il tuo indirizzo email:<tr><td style="padding:15px 0"><a href=${confirm_link} style="font-size:14px;letter-spacing:1.2px;padding:13px 17px;font-weight:600;background-color:#004a77;border-radius:10px;color:#fff;text-decoration:none"target=_blank>Conferma email</a><tr><td style=text-align:left><p style=line-height:1.3>Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo.<tr><td style=text-align:left><p style=line-height:1.3>A presto!</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Il bottone non funziona? Conferma l'email attraverso il seguente link: <a href=${confirm_link} style=color:#004a77 target=_blank>${confirm_link}</a>.<p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src=${API_URL}/email/v3/icon-allmuted.png style=height:35px;margin-bottom:5px alt="Fermi Notify"></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrat${gender == "M" ? "o" : gender == "F" ? "a" : "ə"} a <i>Fermi Notify</i>. Se non sei stato tu, ignora questa email.</table></main><html>`,
             `Ciao ${name}! Per completare la registrazione, conferma il tuo indirizzo email: ${confirm_link}. Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo. A presto!`,
             {
-                "List-Unsubscribe": `<mailto:unsubscribe@fn.lkev.in?subject=Unsubscribe%20%3A%28&id=${result.rows[0].id}&token=${result.rows[0].unsub_token}&email=${result.rows[0].email}>, <${URL}/auth/unsubscribe?id=${result.rows[0].id}&token=${result.rows[0].unsub_token}&email=${result.rows[0].email}>`
+                ...unsubscribeHeaders({ id: result.rows[0].id, unsub_token: result.rows[0].unsub_token })
             }
         );
 
@@ -162,6 +165,7 @@ router.get('/register/confirmation/:code', async (req, res) => {
     const code = req.params.code;
 
     try {
+        if (!String(code).startsWith('X')) return res.status(400).json({ error: 'Codice di conferma non valido!' });
         const email = await getUserEmailWithTelegramID(code);
         if (!email) return res.status(400).json({ error: 'Codice di conferma non valido!' });
         
@@ -180,7 +184,7 @@ router.get('/register/confirmation/:code', async (req, res) => {
                 `<!doctype html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table border=0 cellpadding=0 cellspacing=0 style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src=${API_URL}/email/v3/logo-long-allmuted-trasp.png style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table border=0 cellpadding=0 cellspacing=0 style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"><tr><td><h2 style="margin:10px 0">Benvenut${gender == "M" ? "o" : gender == "F" ? "a" : "ə"} a Fermi Notify!</h2><tr><td style=text-align:left><h4 style=margin-bottom:0>Ciao ${safeName}!</h4><p style=line-height:1.3;margin-top:10px;margin-bottom:10px>Grazie per esserti registrat${gender == "M" ? "o" : gender == "F" ? "a" : "ə"}, di seguito ci sono alcune indicazioni sul funzionamento di Fermi Notify.<h4 style=margin-bottom:0>Keyword</h4><p style=line-height:1.3;margin-top:10px;margin-bottom:10px>Nella <a href=${URL}/dashboard style="color:#004a77;text-decoration:none;border-bottom:1px solid #004a77"target=_blank>Dashboard</a> potrai inserire le tue <b>keyword</b>, necessarie per trovare le variazioni dell'orario che ti riguardano. Ti invitiamo ad aggiungere le parole che riconducono a te (il tuo cognome, la tua classe, i tuoi corsi, ecc...).<br>Presta attenzione alla <b>formattazione</b> delle keywords, dev'essere uguale a quella scritta nel calendario giornaliero (es. <i>4CIIN</i>, non "4 CIIN" o "4CIN")!<h4 style=margin-bottom:0>Notifiche</h4><p style=line-height:1.3;margin-top:10px;margin-bottom:10px>Vengono inviate notifiche sulle variazioni che contengono le tue keyword tramite email e/o Telegram. Puoi modificare le preferenze sulle notifiche nella <a href=${URL}/dashboard style="color:#004a77;text-decoration:none;border-bottom:1px solid #004a77"target=_blank>Dashboard</a>.<ul style=padding-top:0;line-height:1.3;margin-top:0><li>Se c'è una variazione dell'orario, riceverai una notifica che riassume tutte le variazioni della giornata alle <b>6 del giorno stesso</b>.<li>Se viene pubblicata una variazione dell'orario poche ore prima che si verifichi (es. sostituzione dell'ultimo minuto), verrai notificat${gender == "M" ? "o" : gender == "F" ? "a" : "ə"} <b>all'istante</b>.</ul><p style=margin-top:10px;margin-bottom:10px>Per maggiori informazioni, visita la <a href=${URL}/faq style="color:#004a77;text-decoration:none;border-bottom:1px solid #004a77"target=_blank>FAQ</a>.</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src=${API_URL}/email/v3/icon-allmuted.png style=height:35px;margin-bottom:5px alt="Fermi Notify"></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrat${gender == "M" ? "o" : gender == "F" ? "a" : "ə"} a Fermi Notify. Puoi disattivare le notifiche via mail <a href="${URL}/auth/unsubscribe?id=${unsub_info.id}&token=${unsub_info.unsub_token}&email=${email}" style="color:#004a77;text-decoration:none;border-bottom:1px solid #004a77"target=_blank>qui</a>.</table></main>`,
                 `Ciao ${name}! Benvenuto a Fermi Notify! Esplora la Dashboard a ${URL}/dashboard per personalizzare le notifiche e visita ${URL}/faq per scoprire come funziona Fermi Notify.`,
                 {
-                    "List-Unsubscribe": `<mailto:unsubscribe@fn.lkev.in?subject=Unsubscribe%20%3A%28&id=${unsub_info.id}&token=${unsub_info.unsub_token}&email=${email}>, <${URL}/auth/unsubscribe?id=${unsub_info.id}&token=${unsub_info.unsub_token}&email=${email}>`
+                    ...unsubscribeHeaders({ id: unsub_info.id, unsub_token: unsub_info.unsub_token })
                 },
             );
         } catch (err) {
@@ -203,7 +207,7 @@ router.post('/login', async (req, res) => {
     email = email.trim().toLowerCase();
 
     try {
-    const result = await pool.query('SELECT * FROM subscribers WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM subscribers WHERE lower(email) = lower($1)', [email]);
     if (result.rowCount === 0) {
         log.warn('Login failed - email not found', { email: email?.toLowerCase(), ip: req.ip });
         return res.status(404).json({ error: 'Email not found' });
@@ -211,15 +215,38 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
     // Google-only accounts have no password set.
-    if (!user.password) {
-        log.warn('Login failed - account has no password (Google-only)', { id: user.id, email: user.email, ip: req.ip });
-        return res.status(401).json({ error: 'Questo account usa l\'accesso con Google.', code: 'google_only' });
+    // Moodle accounts: the password is checked on the school site, never stored here
+    // (an account may also have its own password, set later with "Password dimenticata?").
+    let session = null;
+    if (user.school_username && !(user.password && await bcrypt.compare(password, user.password))) {
+        if (schoolLoginLimited(clientIp(req), user.school_username)) {
+            return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
+        }
+        try {
+            session = await loginWith(user.school_username, password);
+        } catch (err) {
+            if (err instanceof SchoolLoginError) {
+                log.warn('Login failed - invalid Moodle password', { id: user.id, ip: req.ip });
+                return res.status(401).json({ error: 'Invalid credentials' });
+            }
+            log.error('Login failed - school site unreachable', { id: user.id, error: err.message });
+            return res.status(502).json({ error: 'Sito della scuola non raggiungibile, riprova più tardi' });
+        }
+    } else {
+        // Google-only accounts have no password set.
+        if (!user.password) {
+            log.warn('Login failed - account has no password (Google-only)', { id: user.id, email: user.email, ip: req.ip });
+            return res.status(401).json({ error: 'Questo account usa l\'accesso con Google.', code: 'google_only' });
+        }
+        const match = await bcrypt.compare(password, user.password);
+        if (!match) {
+            log.warn('Login failed - invalid password', { id: user.id, email: user.email, ip: req.ip });
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
     }
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-        log.warn('Login failed - invalid password', { id: user.id, email: user.email, ip: req.ip });
-        return res.status(401).json({ error: 'Invalid credentials' });
-    }
+
+    if ((user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
+    const ticket = session && (await teacherTicket(session, user.id));
 
     // generate JWT token of 1 min
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {
@@ -251,7 +278,7 @@ router.post('/login', async (req, res) => {
         maxAge: 365 * 24 * 60 * 60 * 1000, // 1 year
     });
     log.info('Login success', { id: user.id, email: user.email, ip: req.ip });
-    res.json({ token, onboarding: !user.onboarding });
+    res.json({ token, onboarding: !user.onboarding, ...(ticket ? { ticket } : {}) });
     // update onboarding set to true after first login
     await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [user.id]);
     } catch (err) {
@@ -341,7 +368,7 @@ router.post('/request-change-password', async (req, res) => {
         const randomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
         try {
             await pool.query(
-                `UPDATE subscribers SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP WHERE email = $2;`,
+                `UPDATE subscribers SET secret_temp = $1, secret_temp_timestamp = CURRENT_TIMESTAMP WHERE lower(email) = lower($2);`,
                 [randomCode, email]
             );
         } catch (err) {
@@ -356,7 +383,7 @@ router.post('/request-change-password', async (req, res) => {
                 `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"border=0 cellpadding=0 cellspacing=0 width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src="${API_URL}/email/v3/logo-long-allmuted-trasp.png" style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"border=0 cellpadding=0 cellspacing=0><tr><td><h2 style="margin:10px 0">Il tuo codice di sicurezza</h2><tr><td style=text-align:left><p style=margin-bottom:0>Ciao ${safeName},<p style=line-height:1.3;margin-top:10px;margin-bottom:10px>il tuo <b>codice di sicurezza OTP</b> è:<table style="margin-left:auto;margin-right:auto;padding:5px 0;text-align:center;border-radius:10px"><tr><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[0]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[1]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[2]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[3]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[4]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[5]}</h1></table><tr><td style=font-size:13px;text-align:center><p style=margin-bottom:15px>Il codice scadrà tra <b>15 minuti</b>.<br>Ti inviamo questo codice perché hai richiesto di cambiare la password del tuo account. Se non hai richiesto di cambiare la password, puoi ignorare questa email.</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src="${API_URL}/email/v3/icon-allmuted.png" style=height:35px;margin-bottom:5px></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrato a Fermi Notify. Puoi disattivare le notifiche via mail <a href="${URL}/user/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}" style=color:#004a77>qui</a>.</table></main><html>`,
                 `Ciao ${name}, il tuo codice di sicurezza OTP per reimpostare la password è: ${randomCode}. Se non hai richiesto di cambiare la password, puoi ignorare questa email.`,
                 {
-                    'List-Unsubscribe': `<mailto:unsubscribe@fn.lkev.in?subject=Unsubscribe%20%3A%28&id=${user.id}&token=${user.unsub_token}&email=${email}>, <${URL}/auth/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}>`
+                    ...unsubscribeHeaders({ id: user.id, unsub_token: user.unsub_token })
                 }
             );
         } catch (mailErr) {
@@ -412,7 +439,7 @@ router.post('/new-change-password', async (req, res) => {
         
         const hashed = await bcrypt.hash(newPassword, 10);
         await pool.query(
-            `UPDATE subscribers SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL WHERE email = $2`,
+            `UPDATE subscribers SET password = $1, secret_temp = NULL, secret_temp_timestamp = NULL WHERE lower(email) = lower($2)`,
             [hashed, email]
         );
 

@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "helvetica",
+        "createdAt": "2026-10-28T10:18:43.977Z",
+        "reason": "Claude triage: email-safe font stack in the inline HTML email templates (routes/auth.js, utils/email.js); email clients do not load web fonts reliably; pre-existing, not changed this session"
+      }
+    ]
+  }
+}

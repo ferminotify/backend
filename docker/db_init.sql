@@ -28,7 +28,10 @@ CREATE TABLE public.subscribers (
     last_login               timestamp without time zone,
     onboarding               boolean                DEFAULT false,
     google_id                character varying(40)  UNIQUE,
-    profile_complete         boolean                DEFAULT true
+    profile_complete         boolean                DEFAULT true,
+    school_username          character varying(150) UNIQUE,
+    notify_optin             text[]                 NOT NULL DEFAULT '{}',
+    school_ticket            text
 );
 
 -- ── refresh_tokens ────────────────────────────────────────────────────────────

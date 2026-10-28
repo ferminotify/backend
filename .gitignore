@@ -1,2 +1,4 @@
 .env
 node_modules/
+# ML datasets: event titles with teacher names and student initials
+ml/data/

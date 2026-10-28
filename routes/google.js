@@ -107,12 +107,21 @@ router.get('/callback', async (req, res) => {
     } else {
       // 2) Existing account with the same (verified) email → auto-link.
       const byEmail = await pool.query(
-        'SELECT id FROM subscribers WHERE email = $1',
+        'SELECT id, notifications FROM subscribers WHERE lower(email) = lower($1)',
         [email]
       );
       if (byEmail.rowCount > 0) {
         userId = byEmail.rows[0].id;
-        await pool.query('UPDATE subscribers SET google_id = $1 WHERE id = $2', [googleId, userId]);
+        if ((byEmail.rows[0].notifications ?? 0) < 0) {
+          await pool.query('DELETE FROM refresh_tokens WHERE sub_id = $1', [userId]);
+          await pool.query(
+            'UPDATE subscribers SET google_id = $1, password = NULL, school_username = NULL, notifications = GREATEST(notifications, 0) WHERE id = $2',
+            [googleId, userId]
+          );
+          log.info('Google claimed an unconfirmed account: earlier password, Moodle and sessions dropped', { id: userId });
+        } else {
+          await pool.query('UPDATE subscribers SET google_id = $1 WHERE id = $2', [googleId, userId]);
+        }
         log.info('Linked Google account to existing user', { id: userId, email });
       } else {
         // 3) Brand-new account. gender='X' placeholder, profile_complete=false

@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import logger from '../utils/logger.js';
+import { jointKeywords } from '../utils/timetable/keywords.js';
 
 const router = express.Router();
 const log = logger.child('keyword');
@@ -25,15 +26,23 @@ router.put('/add', async (req, res) => {
     }
 
     user.tags = user.tags || [];
-    if (!user.tags.includes(keyword)) {
-      user.tags.push(keyword);
+    let joints = [];
+    try {
+      joints = await jointKeywords(keyword);
+    } catch (err) {
+      log.warn('Joint classes unavailable, keyword added alone', { userId, error: err.message });
+    }
+    const have = new Set(user.tags.map((t) => String(t).toUpperCase()));
+    const added = [keyword, ...joints].filter((k) => !have.has(k.toUpperCase()) && have.add(k.toUpperCase()));
+    if (added.length) {
+      user.tags.push(...added);
       await pool.query('UPDATE subscribers SET tags = $1 WHERE id = $2', [user.tags, userId]);
-      log.info('Keyword added', { userId, keyword });
+      log.info('Keyword added', { userId, keyword, joints });
     } else {
       log.debug('Keyword already present', { userId, keyword });
     }
 
-    res.status(200).json({ message: 'Keyword added successfully' });
+    res.status(200).json({ message: 'Keyword added successfully', keywords: user.tags, added });
   } catch (error) {
     log.error('Error adding keyword', { userId, error: error.stack || error });
     res.status(500).json({ message: 'Server error' });
