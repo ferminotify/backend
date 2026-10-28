@@ -1,11 +1,11 @@
 // Timetable + variations for one class or room, for a given week.
-import { findEntity, getIndex, getTable, sessionSeesTeachers, ENTITY_TYPES, ALL_TYPES } from './school.js';
-import { hasCredentials, SchoolSessionExpired } from './schoolSession.js';
+import { findEntity, getIndex, getTable, sessionSeesTeachers, ALL_TYPES } from './school.js';
+import { SchoolSessionExpired } from './schoolSession.js';
 import { getVariations } from './variations.js';
-import { assessSummary, UNCERTAIN_BELOW } from './confidence.js';
+import { assessSummary } from './confidence.js';
 import { buildWeek, jointClasses, jointsOf, teacherContext } from './merge.js';
 
-export { ENTITY_TYPES, ALL_TYPES, getIndex, sessionSeesTeachers, hasCredentials, SchoolSessionExpired };
+export { ALL_TYPES, getIndex, sessionSeesTeachers, SchoolSessionExpired };
 export { loginWith, logoutSession, SchoolLoginError } from './schoolSession.js';
 
 const TZ = 'Europe/Rome';
@@ -48,7 +48,7 @@ let assessed = { index: null, bySummary: new Map() };
 
 /**
  * Adds `reading` to each variation: { score, issues }, how sure the parser is (confidence.js).
- * Below UNCERTAIN_BELOW the timetable says the title was hard to read.
+ * Below 60 the timetable says the title was hard to read.
  */
 async function withReadings(variations) {
   const pub = await getIndex().catch(() => null);
@@ -68,12 +68,12 @@ async function withReadings(variations) {
  * @param {object} [opts]
  * @param {boolean} [opts.authed]  caller may see teachers: use the logged-in site
  *   (teachers in every cell, 'teacher' type). Falls back to the public page for
- *   classes/rooms when the school login fails.
- * @param {object} [opts.session]  the caller's own school session; default: service account.
+ *   classes/rooms when the school site fails.
+ * @param {object} [opts.session]  the caller's own school session, needed for `authed`.
  * @returns {Promise<null | object>} null when the class/room/teacher does not exist.
  */
 export async function getWeek(type, ref, { date, authed = false, session } = {}) {
-  const useAuthed = authed && Boolean(session || hasCredentials());
+  const useAuthed = authed && Boolean(session);
   if (type === 'teacher' && !useAuthed) return null;
   const entity = await findEntity(type, ref, { authed: useAuthed, session });
   if (!entity) return null;
@@ -105,8 +105,9 @@ export async function getWeek(type, ref, { date, authed = false, session } = {})
     .map((key) => classIndex.find((c) => c.key === key))
     .filter(Boolean);
   // Who teaches each lesson, to tell a substitution from a room change (see lessonRole): the
-  // logged-in timetable when this one has no teachers. Only used to decide, never sent.
-  const needTeachers = type !== 'teacher' && !table.lessons.some((l) => l.teachers?.length) && hasCredentials();
+  // logged-in timetable when this one has no teachers, if cached (left by a Moodle session).
+  // Only used to decide, never sent.
+  const needTeachers = type !== 'teacher' && !table.lessons.some((l) => l.teachers?.length);
   const jointTable = (id, opts) => getTable('class', id, opts).then((r) => r.table, () => null);
   // Everything else at once: on a cold cache these are separate school-site pages.
   const [teacherIndex, ownWithTeachers, jointTables] = await Promise.all([

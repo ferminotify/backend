@@ -1,13 +1,11 @@
 import express from 'express';
 import crypto from 'crypto';
-import { clientIp } from '../utils/clientIp.js';
-import { schoolLoginLimited } from '../utils/schoolLoginLimit.js';
+import { clientIp, schoolLoginLimited, searchLimited } from '../utils/limiter.js';
 import logger from '../utils/logger.js';
 import {
   ALL_TYPES,
   getIndex,
   getWeek,
-  hasCredentials,
   loginWith,
   logoutSession,
   sessionSeesTeachers,
@@ -17,25 +15,22 @@ import {
 } from '../utils/timetable/index.js';
 import { matchKeywords } from '../utils/timetable/keywords.js';
 import { calendarSurnames } from '../utils/timetable/calendarNames.js';
-import { optionalSchoolUser } from '../utils/schoolAccess.js';
 import { optionalSchoolTicket, sealTicket } from '../utils/schoolTicket.js';
 
 const router = express.Router();
 const log = logger.child('timetable');
 
-// Teachers (the school's reserved area: names and timetables) are shown to:
-// - users with their own school (Moodle) session: logged in with Moodle on /orario, or
-//   with a Moodle account (utils/schoolTicket.js), fetched with that session;
-// - confirmed @fermimn.edu.it Fermi Notify accounts (utils/schoolAccess.js), fetched with
-//   the service account from the env.
+// Teachers are shown only to users with their own school (Moodle) session whose account
+// sees them on the school site: logged in with Moodle on /orario, or with a Moodle account
+// (dashboard, login; utils/schoolTicket.js). Fetched with that session.
 // Everyone else: the surnames the public calendar prints, for keyword suggestions only
 // (utils/timetable/calendarNames.js).
-const canSeeTeachers = (req) => Boolean(req.schoolSession || req.schoolUser);
+const canSeeTeachers = (req) => Boolean(req.schoolSession);
 
 // Public, read-only. Short browser cache: variations change during the day.
 // Responses with teachers are never cached by browsers or proxies.
 const setCache = (req, res, seconds) => {
-  res.set('Vary', 'Authorization, X-School-Ticket');
+  res.set('Vary', 'X-School-Ticket');
   res.set('Cache-Control', canSeeTeachers(req) ? 'private, no-store' : `public, max-age=${seconds}`);
 };
 
@@ -139,9 +134,6 @@ async function liveSchoolSession(req, res, next) {
 // it asks for every user's keywords at once, every few minutes.
 const SEARCH_MAX_KEYWORDS = 20000;
 const PUBLIC_MAX_KEYWORDS = 20;
-const PUBLIC_WINDOW_MS = 60 * 1000;
-const PUBLIC_MAX_PER_WINDOW = 30;
-const searchHits = new Map(); // ip -> { count, reset }
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function isNotifier(req) {
@@ -149,20 +141,6 @@ function isNotifier(req) {
   const expected = Buffer.from(`Bearer ${key}`);
   const received = Buffer.from(req.headers.authorization || '');
   return Boolean(key) && received.length === expected.length && crypto.timingSafeEqual(received, expected);
-}
-
-function searchLimited(ip) {
-  const now = Date.now();
-  if (searchHits.size > 10000) {
-    for (const [k, v] of searchHits) if (v.reset < now) searchHits.delete(k);
-  }
-  const entry = searchHits.get(ip);
-  if (!entry || entry.reset < now) {
-    searchHits.set(ip, { count: 1, reset: now + PUBLIC_WINDOW_MS });
-    return false;
-  }
-  entry.count += 1;
-  return entry.count > PUBLIC_MAX_PER_WINDOW;
 }
 
 /**
@@ -207,16 +185,15 @@ router.post('/search', async (req, res) => {
   }
 });
 
-router.use(optionalSchoolTicket, liveSchoolSession, optionalSchoolUser);
+router.use(optionalSchoolTicket, liveSchoolSession);
 
 /** Classes and rooms on the school timetable; also teachers for those allowed. */
 router.get('/', async (req, res) => {
   const session = req.schoolSession || undefined;
   try {
-    const authed = Boolean(session) || (Boolean(req.schoolUser) && hasCredentials());
     const pub = await getIndex();
     let priv = null;
-    if (authed) {
+    if (session) {
       priv = await withOwnSession(req, () => getIndex({ authed: true, session })).catch((err) => {
         if (err instanceof SchoolSessionExpired) throw err;
         return null;
@@ -231,7 +208,6 @@ router.get('/', async (req, res) => {
       teachers: canSeeTeachers(req) ? list(priv?.teacher) : null,
       // Public: surnames printed in the calendar's titles (keyword suggestions)
       calendarTeachers: calendarSurnames(),
-      schoolUser: Boolean(req.schoolUser),
       schoolSession: Boolean(session),
     });
   } catch (err) {
@@ -246,7 +222,7 @@ router.get('/:type/:ref', async (req, res) => {
   const type = { classe: 'class', aula: 'room', docente: 'teacher' }[req.params.type] || req.params.type;
   if (!ALL_TYPES.includes(type)) return res.status(404).json({ error: 'Tipo non valido' });
   if (type === 'teacher' && !canSeeTeachers(req)) {
-    return res.status(403).json({ error: 'Orario docenti disponibile solo accedendo con Moodle o con un account @fermimn.edu.it' });
+    return res.status(403).json({ error: 'Orario docenti disponibile solo accedendo con Moodle' });
   }
 
   try {

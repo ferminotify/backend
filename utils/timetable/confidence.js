@@ -4,9 +4,6 @@
 import { GROUP_SEGMENT, INITIAL_NAME, kindHasTypo, matchKind, PROF_START, ROOM_RE, splitSegments } from './variations.js';
 import { entityKey, sameClassKey, sameRoom } from './normalize.js';
 
-// Below this score the timetable flags the reading as uncertain.
-export const UNCERTAIN_BELOW = 60;
-
 // Places named by the calendar that are not on the timetable site: not an error.
 const KNOWN_PLACES = /\b(MENSA|AULA MAGNA|BIBLIOTECA|AUDITORIUM|CORTILE|PALESTRA|PALAZZETTO|TEATRO)\b/;
 

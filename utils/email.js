@@ -49,18 +49,32 @@ export async function sendWelcomeEmail(email, { name, gender, unsubInfo }) {
 /**
  * Send the "confirm your address" email of a new signup (password or Moodle).
  * @param {string} email recipient
- * @param {{name:string, gender:string, code:string, unsubInfo:{id:number|string, unsub_token:string}}} opts
+ * @param {{name:string, gender:string, code:string, unsubInfo:{id:number|string, unsub_token:string}, schoolUsername?:string|null}} opts
  *   code: the temporary Telegram code, used as the confirmation code.
+ *   schoolUsername: a Moodle signup. Anyone can give any address there, so the email names the
+ *   Moodle account and tells the owner to ignore it if that was not them.
  */
-export async function sendConfirmationEmail(email, { name, gender, code, unsubInfo }) {
+export async function sendConfirmationEmail(email, { name, gender, code, unsubInfo, schoolUsername = null }) {
   const safeName = escapeHtml(name);
   const g = gender === 'M' ? 'o' : gender === 'F' ? 'a' : 'ə';
   const confirm_link = `${URL}/user/auth/register/confirmation/${code}`;
+  const intro = schoolUsername
+    ? `Qualcuno ha creato un account Fermi Notify accedendo con l'account Moodle <b>${escapeHtml(schoolUsername)}</b> e ha indicato questa email. Se sei stat${g} tu, conferma il tuo indirizzo email: potrai accedere con Moodle.`
+    : 'Per completare la registrazione, conferma il tuo indirizzo email:';
+  const notYou = schoolUsername
+    ? `<tr><td style=text-align:left><p style=line-height:1.3><b>Se non sei stat${g} tu, ignora questa email: l'account non verrà attivato.</b>`
+    : '';
+  const why = schoolUsername
+    ? 'Hai ricevuto questa email perché questo indirizzo è stato indicato durante un accesso a <i>Fermi Notify</i> con Moodle.'
+    : `Hai ricevuto questa email perché ti sei registrat${g} a <i>Fermi Notify</i>. Se non sei stato tu, ignora questa email.`;
+  const introText = schoolUsername
+    ? `Qualcuno ha creato un account Fermi Notify accedendo con l'account Moodle ${schoolUsername} e ha indicato questa email. Se sei stat${g} tu, conferma il tuo indirizzo email: ${confirm_link}. Se non sei stat${g} tu, ignora questa email: l'account non verrà attivato.`
+    : `Per completare la registrazione, conferma il tuo indirizzo email: ${confirm_link}.`;
   return sendMailAsync(
     email,
     `Conferma la registrazione`,
-    `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table border=0 cellpadding=0 cellspacing=0 style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src=${API_URL}/email/v3/logo-long-allmuted-trasp.png style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table border=0 cellpadding=0 cellspacing=0 style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"><tr><td><h2 style="margin:10px 0">Ciao ${safeName}!</h2><tr><td style=text-align:left><p style=line-height:1.3>Per completare la registrazione, conferma il tuo indirizzo email:<tr><td style="padding:15px 0"><a href=${confirm_link} style="font-size:14px;letter-spacing:1.2px;padding:13px 17px;font-weight:600;background-color:#004a77;border-radius:10px;color:#fff;text-decoration:none"target=_blank>Conferma email</a><tr><td style=text-align:left><p style=line-height:1.3>Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo.<tr><td style=text-align:left><p style=line-height:1.3>A presto!</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Il bottone non funziona? Conferma l'email attraverso il seguente link: <a href=${confirm_link} style=color:#004a77 target=_blank>${confirm_link}</a>.<p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src=${API_URL}/email/v3/icon-allmuted.png style=height:35px;margin-bottom:5px alt="Fermi Notify"></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrat${g} a <i>Fermi Notify</i>. Se non sei stato tu, ignora questa email.</table></main><html>`,
-    `Ciao ${name}! Per completare la registrazione, conferma il tuo indirizzo email: ${confirm_link}. Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo. A presto!`,
+    `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table border=0 cellpadding=0 cellspacing=0 style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src=${API_URL}/email/v3/logo-long-allmuted-trasp.png style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table border=0 cellpadding=0 cellspacing=0 style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"><tr><td><h2 style="margin:10px 0">Ciao ${safeName}!</h2><tr><td style=text-align:left><p style=line-height:1.3>${intro}<tr><td style="padding:15px 0"><a href=${confirm_link} style="font-size:14px;letter-spacing:1.2px;padding:13px 17px;font-weight:600;background-color:#004a77;border-radius:10px;color:#fff;text-decoration:none"target=_blank>Conferma email</a>${notYou}<tr><td style=text-align:left><p style=line-height:1.3>Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo.<tr><td style=text-align:left><p style=line-height:1.3>A presto!</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Il bottone non funziona? Conferma l'email attraverso il seguente link: <a href=${confirm_link} style=color:#004a77 target=_blank>${confirm_link}</a>.<p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src=${API_URL}/email/v3/icon-allmuted.png style=height:35px;margin-bottom:5px alt="Fermi Notify"></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>${why}</table></main><html>`,
+    `Ciao ${name}! ${introText} Appena completerai la registrazione, ti arriverà una seconda email con tutte le indicazioni sull'utilizzo. A presto!`,
     {
       ...unsubscribeHeaders({ id: unsubInfo.id, unsub_token: unsubInfo.unsub_token }),
     }
@@ -124,77 +138,6 @@ async function sendViaSmtp(to, subject, html, plainText, headers = {}) {
   });
   log.info('Email delivered to SMTP catcher', { to, subject, messageId: info.messageId });
   return { smtp: true, messageId: info.messageId };
-}
-
-export async function sendMail(to, subject, html, plainText, headers = {}) {
-  if (!connectionString && smtpHost) return sendViaSmtp(to, subject, html, plainText, headers);
-  const POLLER_WAIT_TIME = 10;
-  try {
-
-    const message = {
-      senderAddress: "<donotreply@fn.lkev.in>",
-      // sender name
-
-      content: {
-        subject: subject,
-        html: html,
-        plainText: plainText
-      },
-      recipients: {
-        to: [
-          {
-            address: to,
-          },
-        ],
-      },
-      headers: headers
-    };
-	
-    let poller
-    try {
-      poller = await getEmailClient().beginSend(message);
-    } catch (beginErr) {
-      log.error('Email beginSend threw', { error: beginErr && beginErr.message ? beginErr.message : beginErr });
-      throw new Error('Failed to start email send operation: ' + (beginErr && beginErr.message ? beginErr.message : beginErr))
-    }
-
-    const opState = poller?.getOperationState && poller.getOperationState()
-    // Some SDK versions return a status field (e.g. 'running') instead of an isStarted boolean.
-    const startedStatuses = new Set(['running', 'inProgress', 'started', 'succeeded'])
-    const status = opState?.status
-    const isStarted = !!(opState && (opState.isStarted || (typeof status === 'string' && startedStatuses.has(status))))
-
-    if (!opState || !isStarted) {
-      // Provide more helpful troubleshooting info
-      const hint = 'Poller did not start. Check AZURE_EMAIL_CONNECTION_STRING, that senderAddress is allowed for your Azure Communication Service resource, and that the recipient address is valid/verified in your resource settings.'
-      throw new Error('Poller was not started. ' + hint + ` Raw opState: ${JSON.stringify(opState)}`)
-    }
-
-    //let timeElapsed = 0;
-    while(!poller.isDone()) {
-      poller.poll();
-
-      await new Promise(resolve => setTimeout(resolve, POLLER_WAIT_TIME * 1000));
-      //timeElapsed += 10;
-
-      /*if(timeElapsed > 18 * POLLER_WAIT_TIME) {
-        throw "ERR Polling timed out.";
-      }*/
-    }
-
-    const result = poller.getResult();
-    if (!result) {
-      throw new Error("Poller result is undefined");
-    }
-
-    if(result.status === "Succeeded") {
-      log.info('SUCCESS sent email', { operationId: result.id, to });
-    } else {
-      throw new Error(result.error || "Email send failed");
-    }
-  } catch (e) {
-    throw new Error("ERR: " + (e.message || e));
-  }
 }
 
 // Non-blocking send: start the send operation but don't poll to completion.

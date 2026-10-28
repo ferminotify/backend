@@ -14,10 +14,16 @@ export async function refuseUnconfirmed(res, userId) {
   try {
     const last = sentAt.get(userId) || 0;
     if (Date.now() - last > RESEND_EVERY_MS) {
-      const { rows } = await pool.query('SELECT id, email, name, gender, telegram, unsub_token FROM subscribers WHERE id = $1', [userId]);
+      const { rows } = await pool.query('SELECT id, email, name, gender, telegram, unsub_token, school_username FROM subscribers WHERE id = $1', [userId]);
       const u = rows[0];
       if (u?.telegram) {
-        await sendConfirmationEmail(u.email, { name: u.name, gender: u.gender, code: u.telegram, unsubInfo: { id: u.id, unsub_token: u.unsub_token } });
+        await sendConfirmationEmail(u.email, {
+          name: u.name,
+          gender: u.gender,
+          code: u.telegram,
+          unsubInfo: { id: u.id, unsub_token: u.unsub_token },
+          schoolUsername: u.school_username,
+        });
         sentAt.set(userId, Date.now());
         if (sentAt.size > 5000) sentAt.delete(sentAt.keys().next().value);
       }

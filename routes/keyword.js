@@ -26,8 +26,6 @@ router.put('/add', async (req, res) => {
     }
 
     user.tags = user.tags || [];
-    // A class also brings the joint classes it is part of ("5EELE" → "5EELEET"): the notifier
-    // matches only the keywords set, so removing one stops those events.
     let joints = [];
     try {
       joints = await jointKeywords(keyword);

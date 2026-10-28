@@ -109,7 +109,8 @@ export async function jointKeywords(kw) {
  */
 export async function matchKeywords(events, keywords) {
   const pub = await getIndex();
-  // Teachers come from the service account; without it, surnames fall back to the word search.
+  // Teachers from the cached logged-in index (left by Moodle sessions); none yet: surnames
+  // fall back to the word search.
   const priv = await getIndex({ authed: true }).catch((err) => {
     log.warn('Teacher list unavailable, surnames matched as words', { error: err.message });
     return null;

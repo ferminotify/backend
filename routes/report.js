@@ -1,7 +1,7 @@
 // "Segnala un problema": anonymous reports about the timetable page, emailed to the admins.
 // Mounted before the global JSON parser: the optional screenshot needs a larger body limit.
 import express from 'express';
-import { clientIp } from '../utils/clientIp.js';
+import { clientIp, reportLimited } from '../utils/limiter.js';
 import logger from '../utils/logger.js';
 import { REPORT_EMAIL, sendReportMail } from '../utils/reportMail.js';
 
@@ -10,34 +10,6 @@ const log = logger.child('report');
 
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 router.use(express.json({ limit: '6mb' }));
-
-// Anyone can post: limit per IP, and overall so a flood cannot fill the inbox.
-const WINDOW_MS = 60 * 60 * 1000;
-const MAX_PER_IP = 5;
-const MAX_TOTAL = 60;
-// Per day too: well under Gmail's ~500 messages a day, so the inbox account keeps working.
-const DAY_MS = 24 * 60 * 60 * 1000;
-const MAX_PER_DAY = 200;
-const attempts = new Map(); // ip -> { count, reset }
-let total = { count: 0, reset: 0 };
-let daily = { count: 0, reset: 0 };
-
-export function limited(ip) {
-  const now = Date.now();
-  if (total.reset < now) total = { count: 0, reset: now + WINDOW_MS };
-  if (daily.reset < now) daily = { count: 0, reset: now + DAY_MS };
-  if (attempts.size > 5000) for (const [k, v] of attempts) if (v.reset < now) attempts.delete(k);
-  const entry = attempts.get(ip);
-  if (!entry || entry.reset < now) attempts.set(ip, { count: 1, reset: now + WINDOW_MS });
-  else entry.count += 1;
-  // Over its own limit: refused without touching the shared budgets, so one address that
-  // keeps trying cannot use up the hour or the day for everybody.
-  if (attempts.get(ip).count > MAX_PER_IP) return true;
-  if (total.count >= MAX_TOTAL || daily.count >= MAX_PER_DAY) return true;
-  total.count += 1;
-  daily.count += 1;
-  return false;
-}
 
 
 const escapeHtml = (s) =>
@@ -172,7 +144,7 @@ router.post('/timetable', async (req, res) => {
     });
   }
 
-  if (limited(clientIp(req))) return res.status(429).json({ error: 'Troppe segnalazioni, riprova più tardi' });
+  if (reportLimited(clientIp(req))) return res.status(429).json({ error: 'Troppe segnalazioni, riprova più tardi' });
 
   const ctx = body.context && typeof body.context === 'object' ? body.context : {};
   const rows = CONTEXT_FIELDS.map(([key, label, max]) => [label, str(ctx[key], max)]).filter(([, v]) => v);

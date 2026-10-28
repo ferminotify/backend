@@ -77,10 +77,3 @@ export function toMinutes(hhmm) {
   const [h, m] = String(hhmm).split(':').map(Number);
   return h * 60 + (m || 0);
 }
-
-/** Minutes since midnight → "HH:MM". */
-export function fromMinutes(min) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}

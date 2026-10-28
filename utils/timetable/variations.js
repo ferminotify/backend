@@ -153,9 +153,6 @@ export function kindHasTypo(upper) {
 
 export { ROOM_RE, PROF_START, GROUP_SEGMENT, INITIAL_NAME };
 
-// "PROF.", "PROFF.", "PROF.ssa", "PROF.sse" (uppercased)
-const PROF_PREFIX = /^PROFF?(?:\.?SS[AE])?\.?\s*/;
-
 const ROOM_RE = /^(AULA|AULE|LAB(?:ORATORIO)?|FABLAB|PALESTRA|SALA|SALONE|MENSA|BIBLIOTECA|AUDITORIUM|CORTILE|LOCALE|AREA|SEGGIO|DI ?FRONTE|DAVANTI)\b/;
 
 const titleCase = (s) =>

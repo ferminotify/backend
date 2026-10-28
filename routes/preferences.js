@@ -27,7 +27,6 @@ router.post('/notification-preferences', async (req, res) => {
     }
 });
 
-// Opt-in categories (utils/timetable/optIn.js): the list, and the user's choice.
 router.get('/notify-optin', (req, res) => {
     res.json({
         categories: Object.entries(OPT_IN).map(([id, c]) => ({ id, label: c.label, description: c.description, example: c.example })),

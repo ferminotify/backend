@@ -2,27 +2,23 @@
 //
 // POST /            username + password → checked on the school site (the password is only
 //                   forwarded there, never stored or logged). Known account → logged in.
-//                   New one → a short-lived signup token; the profile step asks the rest.
-// POST /complete    signup token + name, surname, gender, email → account created; it enters
-//                   once the email is confirmed (a login before that is refused, link resent).
+//                   New one → a short-lived signup token 
+// POST /complete    signup token + name, surname, gender, email → account created; can log in 
+//                   once the email is confirmed.
 //                   An email that already has an account gets a "Collega Moodle" link instead.
 // POST /link        the link's token (from that email) → Moodle linked to the account, logged in.
 //
 // The account can also log in with its email and the Moodle password: /login checks it on
-// the school site (routes/auth.js). The password is never stored.
-//
-// Both answers carry the school session as a ticket (utils/schoolTicket.js): the page sends
-// it with timetable requests, so teachers come from the user's own session.
+// the school site. The password is never stored.
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import logger from '../utils/logger.js';
-import { clientIp } from '../utils/clientIp.js';
+import { clientIp, schoolLoginLimited } from '../utils/limiter.js';
 import { generateRefreshToken } from '../utils/auth.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendConfirmationEmail, sendMoodleLinkEmail } from '../utils/email.js';
 import { FRONTEND_BASE } from '../utils/google.js';
-import { schoolLoginLimited } from '../utils/schoolLoginLimit.js';
 import { refuseUnconfirmed } from '../utils/confirmReminder.js';
 import { sealTicket } from '../utils/schoolTicket.js';
 import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
@@ -33,15 +29,12 @@ const log = logger.child('moodle-auth');
 const SIGNUP_PURPOSE = 'moodle_signup';
 const LINK_PURPOSE = 'moodle_link';
 const LINK_TTL = '30m';
-// One "Collega Moodle" email per account every few minutes: the form must not be usable
-// to flood someone's inbox.
 const LINK_EMAIL_EVERY_MS = 5 * 60 * 1000;
 const linkEmailSent = new Map(); // user id -> time
 const SIGNUP_TTL = '30m';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
 
-/** Logs the user in as /login does: refresh token cookie + 1h access token. */
 async function startSession(res, user) {
   const refreshToken = await generateRefreshToken(user.id, YEAR_MS);
   await pool
@@ -167,7 +160,13 @@ router.post('/complete', async (req, res) => {
       [name, surname, email, claims.schoolUsername, gender, code]
     );
     const user = ins.rows[0];
-    await sendConfirmationEmail(email, { name, gender, code, unsubInfo: { id: user.id, unsub_token: user.unsub_token } });
+    await sendConfirmationEmail(email, {
+      name,
+      gender,
+      code,
+      unsubInfo: { id: user.id, unsub_token: user.unsub_token },
+      schoolUsername: claims.schoolUsername,
+    });
     await client.query('COMMIT');
 
     // No session yet: the account enters once the email is confirmed.

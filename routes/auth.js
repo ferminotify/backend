@@ -1,5 +1,3 @@
-// TODO: unsubscribe, rates limiting
-
 import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -21,8 +19,7 @@ import {
 } from '../utils/utils.js';
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
-import { clientIp } from '../utils/clientIp.js';
-import { schoolLoginLimited } from '../utils/schoolLoginLimit.js';
+import { clientIp, schoolLoginLimited } from '../utils/limiter.js';
 import { sealTicket } from '../utils/schoolTicket.js';
 import { refuseUnconfirmed } from '../utils/confirmReminder.js';
 import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
@@ -87,9 +84,10 @@ router.put('/register', async (req, res) => {
                 await client.query('BEGIN');
                 const hashed = await bcrypt.hash(password, 10);
                 const upd = await client.query(
-                    'UPDATE subscribers SET name = $1, surname = $2, password = $3, gender = $4 WHERE id = $5 RETURNING id, email, unsub_token, telegram, name as db_name, gender as db_gender',
+                    'UPDATE subscribers SET name = $1, surname = $2, password = $3, gender = $4, school_username = NULL WHERE id = $5 RETURNING id, email, unsub_token, telegram, name as db_name, gender as db_gender',
                     [name, surname, hashed, gender, row.id]
                 );
+                await client.query('DELETE FROM refresh_tokens WHERE sub_id = $1', [row.id]);
                 const updated = upd.rows[0];
                 const code = updated.telegram;
                 const confirm_link = `${URL}/user/auth/register/confirmation/${code}`;
@@ -167,6 +165,7 @@ router.get('/register/confirmation/:code', async (req, res) => {
     const code = req.params.code;
 
     try {
+        if (!String(code).startsWith('X')) return res.status(400).json({ error: 'Codice di conferma non valido!' });
         const email = await getUserEmailWithTelegramID(code);
         if (!email) return res.status(400).json({ error: 'Codice di conferma non valido!' });
         
@@ -246,7 +245,6 @@ router.post('/login', async (req, res) => {
         }
     }
 
-    // Only confirmed emails enter (link in the signup email); the link is sent again.
     if ((user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
 
     // generate JWT token of 1 min

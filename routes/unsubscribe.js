@@ -2,7 +2,6 @@
 // POST: one-click unsubscribe (RFC 8058): Gmail and other clients POST to the
 //   List-Unsubscribe URL when "Annulla iscrizione" is pressed; the footer page does the same.
 // GET: never changes anything (mail scanners open links): redirects to the page with the button.
-// Emails off only: Telegram and push stay as they are.
 import express from 'express';
 import pool from '../db.js';
 import logger from '../utils/logger.js';
