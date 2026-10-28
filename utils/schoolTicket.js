@@ -2,6 +2,11 @@
 // opaque ticket (AES-256-GCM, so the client can neither read nor forge it). Stateless:
 // survives restarts, nothing stored server side. The password never gets here.
 import crypto from 'node:crypto';
+import pool from '../db.js';
+import logger from './logger.js';
+import { logoutSession, sessionSeesTeachers } from './timetable/index.js';
+
+const log = logger.child('school-ticket');
 
 // Django's session cookie lives 14 days; stop a bit earlier.
 export const TICKET_TTL_MS = 13 * 24 * 60 * 60 * 1000;
@@ -20,6 +25,31 @@ export function sealTicket(session, now = Date.now()) {
   const body = JSON.stringify({ s: session.sessionid, c: session.csrftoken, e: now + TICKET_TTL_MS });
   const data = Buffer.concat([cipher.update(body, 'utf8'), cipher.final()]);
   return Buffer.concat([iv, cipher.getAuthTag(), data]).toString('base64url');
+}
+
+/**
+ * Ticket only for accounts the school lets see the teachers (else null, session closed).
+ * Saved on the account: its other logins reuse it while valid (profile, routes/user.js).
+ */
+export async function teacherTicket(session, userId) {
+  let ticket = sealTicket(session);
+  try {
+    if (!(await sessionSeesTeachers(session))) {
+      await logoutSession(session);
+      ticket = null;
+    }
+  } catch {
+    // school site down: checked again on first use (routes/timetable.js)
+  }
+  await pool
+    .query('UPDATE subscribers SET school_ticket = $1 WHERE id = $2', [ticket, userId])
+    .catch((err) => log.warn('School ticket not saved', { userId, error: err.message }));
+  return ticket;
+}
+
+/** A dead session is no longer offered to the account's logins. */
+export function forgetTicket(ticket) {
+  return pool.query('UPDATE subscribers SET school_ticket = NULL WHERE school_ticket = $1', [String(ticket)]).catch(() => {});
 }
 
 /** The session in the ticket, or null if the ticket is invalid or expired. */

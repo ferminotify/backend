@@ -360,9 +360,11 @@ export function lessonRole(cell, dayLessons, allSlots) {
   }
 
   const base = dayLessons.find((l) => l.slots.includes(cell.start));
-  if (base?.teachers?.length) return base.teachers.some((t) => mentionsTeacher(named, t)) ? null : { role: 'substitute' };
-  // Who teaches it is not known: an absent teacher means someone else takes the lesson.
-  return vs.some((v) => v.absent?.length) ? { role: 'substitute' } : null;
+  if (!base?.teachers?.length) return null; // who teaches it is not known
+  // "X (Y ASSENTE)" is mostly a co-teacher away: a substitution only when all of them are.
+  const absent = vs.flatMap((v) => v.absent || []);
+  const stays = (t) => mentionsTeacher(named, t) || (absent.length > 0 && !mentionsTeacher(absent, t));
+  return base.teachers.some(stays) ? null : { role: 'substitute' };
 }
 
 /**
@@ -533,7 +535,8 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
             // The class itself changes: gone (entry/exit/trip) → lesson not held. Its lesson
             // given to other teachers, this one not named → this teacher is absent (substituted).
             // A typo of their name is not enough to tell: then just the change.
-            const replaced = v.teachers.length > 0 && !mentionsTeacherTypo(v.teachers, entity.name, teachers);
+            // With the absent ones written, the others stay.
+            const replaced = v.teachers.length > 0 && !v.absent?.length && !mentionsTeacherTypo(v.teachers, entity.name, teachers);
             touch(slot, v, CANCELLING.has(v.kind) || replaced ? 'cancelled' : 'changed', at);
           }
         }

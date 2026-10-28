@@ -1,30 +1,25 @@
 import express from 'express';
 import crypto from 'crypto';
-import { clientIp, schoolLoginLimited, searchLimited } from '../utils/limiter.js';
+import { clientIp, searchLimited } from '../utils/limiter.js';
 import logger from '../utils/logger.js';
 import {
   ALL_TYPES,
   getIndex,
   getWeek,
-  loginWith,
-  logoutSession,
   sessionSeesTeachers,
   upcomingEvents,
-  SchoolLoginError,
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
 import { matchKeywords } from '../utils/timetable/keywords.js';
 import { calendarSurnames } from '../utils/timetable/calendarNames.js';
-import { optionalSchoolTicket, sealTicket } from '../utils/schoolTicket.js';
+import { forgetTicket, optionalSchoolTicket } from '../utils/schoolTicket.js';
 
 const router = express.Router();
 const log = logger.child('timetable');
 
-// Teachers are shown only to users with their own school (Moodle) session whose account
-// sees them on the school site: logged in with Moodle on /orario, or with a Moodle account
-// (dashboard, login; utils/schoolTicket.js). Fetched with that session.
-// Everyone else: the surnames the public calendar prints, for keyword suggestions only
-// (utils/timetable/calendarNames.js).
+// Teachers only for accounts logged in with Moodle that the school lets see them (ticket from
+// routes/moodle.js, routes/auth.js), fetched with that session. Everyone else: the surnames
+// the public calendar prints, for keyword suggestions only (utils/timetable/calendarNames.js).
 const canSeeTeachers = (req) => Boolean(req.schoolSession);
 
 // Public, read-only. Short browser cache: variations change during the day.
@@ -50,54 +45,6 @@ async function withOwnSession(req, fn) {
   }
 }
 
-// --- "Accedi con Moodle" ---------------------------------------------------------------
-
-router.post('/school-login', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  if (!username || !password || username.length > 150 || password.length > 256) {
-    return res.status(400).json({ error: 'Inserisci nome utente e password' });
-  }
-  if (schoolLoginLimited(clientIp(req), username)) {
-    return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
-  }
-
-  let session;
-  try {
-    session = await loginWith(username, password);
-  } catch (err) {
-    if (err instanceof SchoolLoginError) {
-      log.info('School login rejected', { ip: clientIp(req) });
-      return res.status(401).json({ error: 'Nome utente o password errati', code: 'school_login_failed' });
-    }
-    log.error('School login error', { error: err.message });
-    return res.status(502).json({ error: 'Sito della scuola non raggiungibile' });
-  }
-
-  try {
-    if (!(await sessionSeesTeachers(session))) {
-      await logoutSession(session);
-      return res.status(403).json({ error: 'Il tuo account non ha accesso all’orario dei docenti', code: 'school_no_access' });
-    }
-  } catch (err) {
-    log.error('School access check failed', { error: err.message });
-    return res.status(502).json({ error: 'Sito della scuola non raggiungibile' });
-  }
-
-  checkedSessions.set(session.sessionid, Date.now());
-  log.info('School login success', { ip: clientIp(req) });
-  res.json({ ticket: sealTicket(session) });
-});
-
-router.post('/school-logout', optionalSchoolTicket, async (req, res) => {
-  if (req.schoolSession) {
-    checkedSessions.delete(req.schoolSession.sessionid);
-    await logoutSession(req.schoolSession);
-  }
-  res.status(204).end();
-});
-
 // --- Timetable -------------------------------------------------------------------------
 
 // Most data comes from the shared cache, so a user's session would rarely be used and a
@@ -116,6 +63,7 @@ async function liveSchoolSession(req, res, next) {
   } catch (err) {
     if (err instanceof SchoolSessionExpired) {
       checkedSessions.delete(session.sessionid);
+      forgetTicket(req.headers['x-school-ticket']);
       return sessionExpired(res);
     }
     log.warn('School session check failed', { error: err.message });

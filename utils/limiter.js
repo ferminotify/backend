@@ -1,4 +1,4 @@
-// Rate limits (in memory, per process) and the client address they count by.
+// Rate limits
 
 const PRIVATE = /^(::1$|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fc|fd|fe80:)/i;
 
@@ -39,7 +39,7 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-// Moodle logins (each one is a login on the school site): per IP and per username
+// Moodle logins (each one is a request to IS Fermi): per IP and per username
 const schoolLoginByIp = createLimiter({ windowMs: 15 * MINUTE_MS, max: 10 });
 const schoolLoginByUser = createLimiter({ windowMs: 15 * MINUTE_MS, max: 5 });
 
@@ -64,7 +64,6 @@ export function reportLimited(ip) {
   const now = Date.now();
   if (reportHour.reset < now) reportHour = { count: 0, reset: now + HOUR_MS };
   if (reportDay.reset < now) reportDay = { count: 0, reset: now + DAY_MS };
-  // Over its own limit: refused without using up the shared budgets
   if (reportByIp(ip)) return true;
   if (reportHour.count >= REPORT_MAX_PER_HOUR || reportDay.count >= REPORT_MAX_PER_DAY) return true;
   reportHour.count += 1;

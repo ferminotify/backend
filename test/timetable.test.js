@@ -454,6 +454,7 @@ test('buildWeek: teacher view — absence, substitution elsewhere, class away', 
       ['9:00', ['MATEMATICA', 'Aula 12', '2A', 'ROSSI MARIO']],
       ['10:05', null],
       ['11:00', ['FISICA', 'Aula 18', '4C', 'ROSSI MARIO']],
+      ['12:05', ['FISICA', 'Aula 18', '4C', 'ROSSI MARIO']],
     ]),
     { type: 'teacher', withTeachers: true }
   );
@@ -463,6 +464,7 @@ test('buildWeek: teacher view — absence, substitution elsewhere, class away', 
     ev('s', 'CLASSE 5B - AULA 40 - PROF. ROSSI', '10:00', '11:00'),
     ev('t', 'CLASSE 4C - USCITA DIDATTICA - PROF. NERI', '11:00', '12:00'),
     ev('x', 'CLASSE 2A - AULA 46 - PROF. GIALLI', '09:00', '10:00'), // Rossi's class 2A given to Gialli
+    ev('c', 'CLASSE 4C - AULA 18 - PROF. NERI (PROF. BIANCHI ASSENTE)', '12:00', '13:00'), // co-teacher away
   ];
   const { days } = buildWeek({ entity, table, variations, days: monday });
   const at = (slot) => cellAt(days[0], slot);
@@ -472,6 +474,7 @@ test('buildWeek: teacher view — absence, substitution elsewhere, class away', 
   assert.equal(at('10:05').occupant, '5B');
   assert.equal(at('11:00').status, 'cancelled'); // 4C on a trip
   assert.deepEqual(at('11:00').teachers, ['Rossi Mario']);
+  assert.equal(at('12:05').status, 'changed'); // Bianchi absent, not Rossi
 });
 
 test('buildWeek: class view keeps teachers per cell and splits blocks by teacher', () => {
@@ -818,8 +821,15 @@ test('lessonRole: same teacher = same lesson, another = substitution, ANTICIPA =
   assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. ROSSI'), lessons, slots), null); // same teacher
   assert.deepEqual(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI'), lessons, slots), { role: 'substitute' });
   assert.deepEqual(lessonRole(cell("CLASSE 1A - AULA 918 - PROF.ssa GIAMMANCO (ANTICIPA 6' ORA)"), lessons, slots), { role: 'early', subject: 'STORIA' });
-  // Teachers unknown: an absent one means a substitution, otherwise the lesson as it is.
-  assert.deepEqual(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROF. ROSSI: ASSENTE)'), [], slots), { role: 'substitute' });
+  // Absent written: a substitution only when every teacher of the lesson is absent.
+  assert.deepEqual(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROF. ROSSI: ASSENTE)'), lessons, slots), { role: 'substitute' });
+  const two = [{ ...lessons[0], teachers: ['Rossi Mario', 'Neri Anna'] }];
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. NERI (PROF. ROSSI ASSENTE)'), two, slots), null);
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROF. ROSSI ASSENTE)'), two, slots), null); // Neri stays
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROF. BIANCHI ASSENTE)'), lessons, slots), null); // Rossi stays
+  assert.deepEqual(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROFF. ROSSI, NERI: ASSENTI)'), two, slots), { role: 'substitute' });
+  // Teachers unknown: the lesson as it is.
+  assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI (PROF. ROSSI: ASSENTE)'), [], slots), null);
   assert.equal(lessonRole(cell('CLASSE 1A - AULA 46 - PROF. VERDI'), [], slots), null);
 });
 

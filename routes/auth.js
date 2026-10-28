@@ -20,7 +20,7 @@ import {
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
 import { clientIp, schoolLoginLimited } from '../utils/limiter.js';
-import { sealTicket } from '../utils/schoolTicket.js';
+import { teacherTicket } from '../utils/schoolTicket.js';
 import { refuseUnconfirmed } from '../utils/confirmReminder.js';
 import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
 dotenv.config();
@@ -217,13 +217,13 @@ router.post('/login', async (req, res) => {
     // Google-only accounts have no password set.
     // Moodle accounts: the password is checked on the school site, never stored here
     // (an account may also have its own password, set later with "Password dimenticata?").
-    let ticket = null;
+    let session = null;
     if (user.school_username && !(user.password && await bcrypt.compare(password, user.password))) {
         if (schoolLoginLimited(clientIp(req), user.school_username)) {
             return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
         }
         try {
-            ticket = sealTicket(await loginWith(user.school_username, password));
+            session = await loginWith(user.school_username, password);
         } catch (err) {
             if (err instanceof SchoolLoginError) {
                 log.warn('Login failed - invalid Moodle password', { id: user.id, ip: req.ip });
@@ -246,6 +246,7 @@ router.post('/login', async (req, res) => {
     }
 
     if ((user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
+    const ticket = session && (await teacherTicket(session, user.id));
 
     // generate JWT token of 1 min
     const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, {

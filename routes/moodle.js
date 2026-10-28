@@ -20,7 +20,7 @@ import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendConfirmationEmail, sendMoodleLinkEmail } from '../utils/email.js';
 import { FRONTEND_BASE } from '../utils/google.js';
 import { refuseUnconfirmed } from '../utils/confirmReminder.js';
-import { sealTicket } from '../utils/schoolTicket.js';
+import { teacherTicket } from '../utils/schoolTicket.js';
 import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
 
 const router = express.Router();
@@ -69,9 +69,8 @@ router.post('/', async (req, res) => {
       return res.status(401).json({ error: 'Nome utente o password errati', code: 'school_login_failed' });
     }
     log.error('Moodle login error', { error: err.message });
-    return res.status(502).json({ error: 'Sito della scuola non raggiungibile, riprova più tardi' });
+    return res.status(502).json({ error: 'Moodle Fermi non raggiungibile, riprova più tardi' });
   }
-  const ticket = sealTicket(session);
   const schoolUsername = username; // as typed: the school site checks it case-sensitively
 
   try {
@@ -81,7 +80,7 @@ router.post('/', async (req, res) => {
       const token = await startSession(res, rows[0]);
       await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [rows[0].id]);
       log.info('Moodle login success', { id: rows[0].id, ip: clientIp(req) });
-      return res.json({ token, ticket, onboarding: !rows[0].onboarding });
+      return res.json({ token, ticket: await teacherTicket(session, rows[0].id), onboarding: !rows[0].onboarding });
     }
   } catch (err) {
     log.error('Moodle login DB error', { error: err.stack || err });
@@ -91,7 +90,7 @@ router.post('/', async (req, res) => {
   // First time: the school site only proves the account exists, the rest is asked next.
   const signup = jwt.sign({ purpose: SIGNUP_PURPOSE, schoolUsername }, process.env.JWT_SECRET, { expiresIn: SIGNUP_TTL });
   log.info('Moodle signup started', { ip: clientIp(req) });
-  return res.json({ signup, ticket });
+  return res.json({ signup });
 });
 
 router.post('/complete', async (req, res) => {
