@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { brEntries, isPlaceholderTeacher, parseIndex, parseTable } from '../utils/timetable/school.js';
-import { parseEventsCsv, parseSummary } from '../utils/timetable/variations.js';
-import { buildWeek, mentionsClassText, mentionsTeacherTypo, nearClassText, teacherContext, mentionsRoomText, mentionsTeacher, mentionsTeacherText, namesTeacherBare, alignedToSlots, jointClasses, jointsOf, lessonRole, offLessons, SCHOOL_SLOTS, variationSlots } from '../utils/timetable/merge.js';
+import { parseEventsCsv } from '../utils/timetable/calendar.js';
+import { parseSummary } from '../utils/timetable/parse.js';
+import { mentionsClassText, mentionsTeacherTypo, nearClassText, teacherContext, mentionsRoomText, mentionsTeacher, mentionsTeacherText, namesTeacherBare, jointClasses, jointsOf } from '../utils/timetable/match.js';
+import { buildWeek, alignedToSlots, lessonRole, offLessons, SCHOOL_SLOTS, variationSlots } from '../utils/timetable/week.js';
 import { entityKey, sameClassKey, sameRoom } from '../utils/timetable/normalize.js';
 import { weekStart, variationsWindow } from '../utils/timetable/index.js';
 import { sealTicket, openTicket, TICKET_TTL_MS } from '../utils/schoolTicket.js';
@@ -589,7 +591,7 @@ test('sameClassKey: groups, and one letter off only for long articulated names',
 });
 
 test('assessSummary: well-formed titles stay at 100, problems lower the score', async () => {
-  const { assessSummary } = await import('../utils/timetable/confidence.js');
+  const { assessSummary } = await import('../utils/timetable/parse.js');
   const index = {
     classes: [{ key: '3AIIN', name: '3Ai in' }, { key: '5EELEEET', name: '5Eeleeet' }, { key: '4EAU', name: '4E au' }],
     rooms: [{ key: 'AULA46', name: 'Aula 46' }, { key: 'AULA13DEBATE', name: 'Aula 1-3 Debate' }],
@@ -684,7 +686,7 @@ test('parseSummary: class lists, classes late in the title, teachers across dash
 });
 
 test('parseSummary: whole years, evening classes, school staff, visits', async () => {
-  const { concernsClass } = await import('../utils/timetable/merge.js');
+  const { concernsClass } = await import('../utils/timetable/match.js');
   const keys = ['1A', '3B', '3AME', '3BMME', '3SMME', '3SIIN', '3BIIN', '4AMME', '4C', '1CIN'];
   const covers = (s) => keys.filter((k) => concernsClass(parseSummary(s), k));
   assert.deepEqual(covers('CLASSI 3^ LICEO - AULA 7 - PROVA COMUNE STORIA'), ['3B']);

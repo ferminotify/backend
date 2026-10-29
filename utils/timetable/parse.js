@@ -1,82 +1,10 @@
-// Timetable variations from the school calendar (via the public Google Sheet the
-// Apps Script keeps in sync, same source as the frontend's "Cerca eventi").
-// Each event title is free text such as:
+// Turns free-text calendar event titles such as:
 //   "CLASSE 3AIIN - AULA 46 - PROFF. ESEMPIO, PROVA (PROF.ssa DEL MODELLO: ASSENTE)"
 //   "CLASSE 4EAU - USCITA ANTICIPATA"
 //   "CLASSI 5C, 5D, 5E - USCITA DIDATTICA - PROFF. ..."
-// and is turned into a structured variation the merge step can apply to a timetable.
-import logger from '../logger.js';
-import { createCache } from './cache.js';
-import { entityKey, roomNumber } from './normalize.js';
-import { calendarEnabled, getCalendarEvents } from './calendar.js';
-
-const log = logger.child('timetable:variations');
-
-const CSV_URL =
-  process.env.EVENTS_CSV_URL ||
-  'https://docs.google.com/spreadsheets/d/1ADaUVRQeYU078-suUxGk0u1aMj_GbcjsAzG11YlMp5g/export?format=csv&gid=0';
-const TTL_MS = Number(process.env.EVENTS_TTL_MS) || 2 * 60 * 1000;
-
-const eventsCache = createCache({ ttlMs: TTL_MS, maxEntries: 1 });
-
-/** Minimal RFC-4180 CSV parser (quoted fields, escaped quotes, embedded newlines). */
-export function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = '';
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\n') {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = '';
-    } else if (c !== '\r') field += c;
-  }
-  if (field !== '' || row.length) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
-}
-
-/** CSV text → events: { uid, summary, date, start, end, allDay } with local "HH:MM" times. */
-export function parseEventsCsv(text) {
-  const rows = parseCsv(text);
-  if (rows.length < 2) return [];
-  const header = rows[0].map((h) => h.trim());
-  const col = (r, name) => r[header.indexOf(name)] || '';
-  return rows
-    .slice(1)
-    .map((r) => {
-      const startDT = col(r, 'start.dateTime');
-      const endDT = col(r, 'end.dateTime');
-      // dateTime strings carry the school's local offset ("2026-10-05T10:00:00+02:00"),
-      // so date and wall-clock time are read straight from the string.
-      const allDay = !startDT;
-      return {
-        uid: col(r, 'uid'),
-        summary: col(r, 'summary').trim(),
-        date: allDay ? col(r, 'start.date') : startDT.slice(0, 10),
-        start: allDay ? null : startDT.slice(11, 16),
-        end: allDay ? null : endDT.slice(11, 16) || startDT.slice(11, 16),
-        allDay,
-      };
-    })
-    .filter((e) => e.uid && e.summary && /^\d{4}-\d{2}-\d{2}$/.test(e.date));
-}
+// into a structured variation the merge step can apply to a timetable, and scores how sure
+// that reading is (assessSummary).
+import { editDistance, entityKey, roomNumber, sameClassKey, sameRoom } from './normalize.js';
 
 // Each kind lists word sequences; a title matches when the words appear consecutively,
 // each within a small edit distance (see fuzzyEqual), so typos like "USCITA ANTICPATA"
@@ -94,23 +22,6 @@ const KINDS = [
 ];
 
 const FILLER = new Set(['D', 'DI']);
-
-/** Levenshtein distance, capped: returns max+1 as soon as it is exceeded. */
-function editDistance(a, b, max) {
-  if (Math.abs(a.length - b.length) > max) return max + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    let rowMin = i;
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-      rowMin = Math.min(rowMin, cur[j]);
-    }
-    if (rowMin > max) return max + 1;
-    prev = cur;
-  }
-  return prev[b.length];
-}
 
 /** Typo tolerance by word length: exact up to 4 letters, 1 edit up to 7, else 2. */
 function fuzzyEqual(word, target) {
@@ -144,14 +55,12 @@ export function matchKind(upper) {
 }
 
 /** The kind was recognised only thanks to typo tolerance ("USCITA ANTICPATA"). */
-export function kindHasTypo(upper) {
+function kindHasTypo(upper) {
   const kind = matchKind(upper);
   if (!kind?.words) return false;
   const joined = ` ${kindTokens(upper).join(' ')} `;
   return !kind.words.some((phrase) => joined.includes(` ${phrase.join(' ')} `));
 }
-
-export { ROOM_RE, PROF_START, GROUP_SEGMENT, INITIAL_NAME };
 
 const ROOM_RE = /^(AULA|AULE|LAB(?:ORATORIO)?|FABLAB|PALESTRA|SALA|SALONE|MENSA|BIBLIOTECA|AUDITORIUM|CORTILE|LOCALE|AREA|SEGGIO|DI ?FRONTE|DAVANTI)\b/;
 
@@ -553,36 +462,99 @@ export function parseSummary(summary) {
   };
 }
 
-const schoolToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome' }).format(new Date());
+// --- Reading confidence -----------------------------------------------------------------
+// How sure we are that an event title was read right: 0–100.
+// Starts from 100; each problem found takes points off. A well-formed title whose classes
+// and rooms all exist on the school timetable stays at 100.
 
-async function loadCsv() {
-  const res = await fetch(CSV_URL, { signal: AbortSignal.timeout(15000) });
-  if (!res.ok) throw new Error(`Events CSV ${res.status}`);
-  return { events: parseEventsCsv(await res.text()), window: null, source: 'csv' };
-}
+// Places named by the calendar that are not on the timetable site: not an error.
+const KNOWN_PLACES = /\b(MENSA|AULA MAGNA|BIBLIOTECA|AUDITORIUM|CORTILE|PALESTRA|PALAZZETTO|TEATRO)\b/;
+
+// Class-like token: "3AIIN", "5EELEET", "1A".
+const CLASS_TOKEN = /\b[1-5][A-Z]{1,8}\b/;
 
 /**
- * All variations currently published, cached briefly. Each event gets its parsed fields merged in.
- * Source: the Calendar API when configured (see calendar.js), else the Sheet CSV; the CSV is
- * also the fallback when the API fails. `window` is the date range the source covers
- * ({from, to}), or null for the CSV (its range is set by the Apps Script).
+ * @param {string} summary  event title
+ * @param {object} parsed   parseSummary(summary)
+ * @param {{classes?:{key,name}[], rooms?:{key,name}[], teachers?:{key,name}[]|null}} index  school timetable entities
+ * @returns {{score:number, issues:{code:string, text:string, penalty:number}[]}}
  */
-export async function getVariations() {
-  const { value, stale } = await eventsCache.get('events', async () => {
-    let loaded;
-    if (calendarEnabled()) {
-      try {
-        const { events, from, to } = await getCalendarEvents(schoolToday());
-        loaded = { events, window: { from, to }, source: 'calendar' };
-      } catch (err) {
-        log.warn('Calendar API failed, using the CSV', { error: err.message });
-      }
+export function assessSummary(summary, parsed, index = {}) {
+  const issues = [];
+  const add = (code, text, penalty) => issues.push({ code, text, penalty });
+  const upper = summary.toUpperCase().replace(/\s+/g, ' ').trim();
+  const segments = splitSegments(upper);
+  // A CLASSE segment anywhere ("ALUNNO B. F. CLASSE 3CIIN", "AULA 620 - CLASSE 1AME")
+  const head = segments.some((seg) => /^(?:ALUNN\w*\b.*?\s)?CLASS[EI]\s/.test(seg));
+  const classKeys = (index.classes || []).map((c) => c.key);
+
+  // A class written without "CLASSE": the parser reads no class at all.
+  const levels = parsed.levels || [];
+  if (!head && !parsed.classes.length && !levels.length && CLASS_TOKEN.test(upper.replace(/\([^)]*\)|\b(AULA|LAB\w*|SALA)\s+\S+/g, ''))) {
+    add('class_no_prefix', 'Sembra nominare una classe ma non inizia con “CLASSE”/“CLASSI”', 50);
+  }
+  // Nothing else the timetable can use: an unrelated event (meeting, course).
+  if (!parsed.classes.length && !levels.length && !parsed.room && !parsed.teachers.length && !parsed.absent.length) return finish(issues);
+
+  // Classes
+  if (levels.some((l) => l.track === 'other')) add('level_track', 'Anni di un indirizzo non riconosciuto (es. “TERZE MECCANICA”): non applicato alle classi', 30);
+  if (head && !parsed.classes.length && !levels.length) add('class_unreadable', 'Dopo “CLASSE” non c’è un nome di classe valido', 45);
+  for (const c of parsed.classes) {
+    if (!classKeys.length) break;
+    const matched = classKeys.filter((k) => sameClassKey(c, k));
+    if (!matched.length) add('class_not_found', `Classe “${c}” non trovata nell’orario`, 45);
+    else if (!matched.some((k) => k === c || k.startsWith(`${c}GRUPPO`))) {
+      add('class_fuzzy', `Classe “${c}” associata per somiglianza a ${matched.join(', ')}`, 15);
     }
-    loaded ||= await loadCsv();
-    log.debug('Fetched variations', { count: loaded.events.length, source: loaded.source });
-    const variations = loaded.events.map((e) => ({ ...e, ...parseSummary(e.summary) }));
-    return { variations, window: loaded.window, source: loaded.source };
-  });
-  if (stale) log.warn('Serving stale variations');
-  return { ...value, stale };
+  }
+
+  // Room
+  if (parsed.room && index.rooms?.length) {
+    const found = index.rooms.some((r) => sameRoom(parsed.room, r.name));
+    if (!found && !KNOWN_PLACES.test(parsed.room.toUpperCase())) {
+      add('room_not_found', `Aula “${parsed.room}” non trovata nell’orario`, 15);
+    }
+  }
+
+  // Kind keyword with a typo
+  if (kindHasTypo(upper)) add('kind_typo', `“${matchKind(upper).label}” scritto con un errore di battitura`, 10);
+
+  // Separators
+  if (/\S-\s|\s-\S/.test(upper.replace(/\b\d+-\d+\b/g, ''))) add('loose_dash', 'Trattino senza spazio da un lato', 5);
+
+  // Free-text segments: the first one is the activity ("PROVA RECUPERO STORIA"); more than
+  // one is unusual ("CLASSE 3A - AULA 46 - BLA - BLA").
+  let unknown = 0;
+  for (const seg of segments) {
+    const s = seg.replace(/\([^)]*\)/g, '').trim();
+    if (!s || /\bCLASS[EI]\s/.test(s) || ROOM_RE.test(s) || /^(PROF|REF\b|ANNULLAT|TUTOR\b)/.test(s) || PROF_START.test(s) || GROUP_SEGMENT.test(s) || INITIAL_NAME.test(s) || matchKind(s) || /^(ORE|DALLE|ALLE)\b/.test(s)) continue;
+    unknown += 1;
+    if (unknown >= 2 && unknown <= 3) add('unknown_part', `Parte non riconosciuta: “${s}”`, 10);
+  }
+
+  // Teachers
+  if (/\bPROF/.test(upper) && !parsed.teachers.length && !parsed.absent.length) {
+    add('prof_empty', 'C’è “PROF.” ma nessun nome leggibile', 10);
+  }
+  if (index.teachers?.length) {
+    const words = (s) => s.toUpperCase().split(/\s+/).map(entityKey).filter(Boolean);
+    const known = index.teachers.map((t) => words(t.name));
+    const missing = [...parsed.teachers, ...parsed.absent].filter((n) => {
+      const w = words(n);
+      return !known.some((k) => w.every((x) => k.includes(x)));
+    });
+    missing.slice(0, 2).forEach((n) => add('teacher_not_found', `Docente “${n}” non trovato`, 10));
+  }
+
+  // A class with nothing that says what changes
+  if (parsed.classes.length && parsed.kind === 'change' && !parsed.room && !parsed.teachers.length && !parsed.absent.length) {
+    add('no_change', 'Nomina la classe ma non dice cosa cambia (aula, docente, uscita…)', 20);
+  }
+
+  return finish(issues);
+}
+
+function finish(issues) {
+  const score = Math.max(0, 100 - issues.reduce((sum, i) => sum + i.penalty, 0));
+  return { score, issues };
 }

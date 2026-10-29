@@ -1,10 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyKeyword, eventMatch, eventMatches, keywordWords } from '../utils/timetable/keywords.js';
-import { cleanOptIn, optInCategory } from '../utils/timetable/optIn.js';
-import { parseSummary } from '../utils/timetable/variations.js';
-import { jointCalendarName } from '../utils/timetable/merge.js';
-import { surnamesFromTitles, schoolYearStart } from '../utils/timetable/calendarNames.js';
+import { classifyKeyword, cleanOptIn, eventMatch, eventMatches, jointCalendarName, keywordWords, optInCategory, schoolYearStart, surnamesFromTitles } from '../utils/timetable/match.js';
+import { parseSummary } from '../utils/timetable/parse.js';
 
 const lists = {
   classKeys: new Set(['1AIIN', '1BIIN', '3MENE', '3ITEL', '3MENEITEL', '5CIIN']),

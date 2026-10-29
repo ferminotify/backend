@@ -11,7 +11,7 @@ const log = logger.child('report-mail');
 
 const gmailUser = process.env.GMAIL_USER;
 const gmailPass = process.env.GMAIL_APP_PASSWORD;
-export const REPORT_EMAIL = process.env.REPORT_EMAIL || gmailUser || 'ferminotify@gmail.com';
+export const REPORT_EMAIL = gmailUser || 'ferminotify@gmail.com';
 
 let transport = null;
 function gmailTransport() {
@@ -46,7 +46,7 @@ export async function sendReportMail({ subject, html, text, replyTo, attachments
       });
       return { via: 'gmail' };
     } catch (err) {
-      // Daily sending limit, revoked App Password, Gmail down: the report still goes out.
+      // use fallback
       log.error('Gmail report failed, using the regular sender', { error: err.message, code: err.responseCode });
       why = 'invio Gmail non riuscito';
     }

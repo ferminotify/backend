@@ -1,33 +1,20 @@
 // Timetable + variations for one class or room, for a given week.
-import { findEntity, getIndex, getTable, sessionSeesTeachers, ALL_TYPES } from './school.js';
-import { SchoolSessionExpired } from './schoolSession.js';
-import { getVariations } from './variations.js';
-import { assessSummary } from './confidence.js';
-import { buildWeek, jointClasses, jointsOf, teacherContext } from './merge.js';
+import { findEntity, getIndex, getTable, sessionSeesTeachers, ALL_TYPES, SchoolSessionExpired } from './school.js';
+import { addDays, getVariations, schoolToday } from './calendar.js';
+import { assessSummary } from './parse.js';
+import { jointClasses, jointsOf, teacherContext } from './match.js';
+import { buildWeek } from './week.js';
 
-export { ALL_TYPES, getIndex, sessionSeesTeachers, SchoolSessionExpired };
-export { loginWith, logoutSession, SchoolLoginError } from './schoolSession.js';
+export { ALL_TYPES, getIndex, schoolToday, sessionSeesTeachers, SchoolSessionExpired };
+export { loginWith, logoutSession, SchoolLoginError } from './school.js';
 
-const TZ = 'Europe/Rome';
 // The Sheet CSV (fallback source) holds events from yesterday to today + 3 days
 // (see calendar-to-sheet.gs); the Calendar API source reports its own window.
 const VARIATIONS_PAST_DAYS = 1;
 const VARIATIONS_AHEAD_DAYS = 3;
 
-/** Today's date at the school, "YYYY-MM-DD". */
-export function schoolToday(now = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(now);
-}
-
 // Date-only arithmetic in UTC so DST never shifts a day.
-const parseDate = (s) => new Date(`${s}T00:00:00Z`);
-const fmtDate = (d) => d.toISOString().slice(0, 10);
-const addDays = (s, n) => {
-  const d = parseDate(s);
-  d.setUTCDate(d.getUTCDate() + n);
-  return fmtDate(d);
-};
-const isoWeekday = (s) => parseDate(s).getUTCDay() || 7;
+const isoWeekday = (s) => new Date(`${s}T00:00:00Z`).getUTCDay() || 7;
 
 /**
  * Monday of the week containing `date`. After the last school day (Saturday for timetables
@@ -47,7 +34,7 @@ export function variationsWindow(today) {
 let assessed = { index: null, bySummary: new Map() };
 
 /**
- * Adds `reading` to each variation: { score, issues }, how sure the parser is (confidence.js).
+ * Adds `reading` to each variation: { score, issues }, how sure the parser is (assessSummary).
  * Below 60 the timetable says the title was hard to read.
  */
 async function withReadings(variations) {

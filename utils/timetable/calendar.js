@@ -1,14 +1,82 @@
-// Timetable variations straight from the school's public Google Calendar (Calendar API v3,
-// API key only). Replaces the Sheet CSV when GOOGLE_CALENDAR_API_KEY is set: the Sheet only
-// holds yesterday → today + 3 days, the API gives any window.
+// Fetches timetable variations: the Calendar API when GOOGLE_CALENDAR_API_KEY is set,
+// else Google Sheet in CSV 
 //
-// The calendar holds ~140k events since 2023, so it is never read whole: only the window
-// below. A full read of the window (~3000 events) runs hourly; in between, every
+// A full read of the window (~3000 events) runs hourly; in between, every
 // EVENTS_TTL_MS only the events changed since the last read are fetched
 // (updatedMin + showDeleted), usually none.
 import logger from '../logger.js';
+import { createCache } from './cache.js';
+import { parseSummary } from './parse.js';
 
-const log = logger.child('timetable:calendar');
+const log = logger.child('timetable:variations');
+
+const CSV_URL =
+  process.env.EVENTS_CSV_URL ||
+  'https://docs.google.com/spreadsheets/d/1ADaUVRQeYU078-suUxGk0u1aMj_GbcjsAzG11YlMp5g/export?format=csv&gid=0';
+const TTL_MS = Number(process.env.EVENTS_TTL_MS) || 2 * 60 * 1000;
+
+const eventsCache = createCache({ ttlMs: TTL_MS, maxEntries: 1 });
+
+/** Minimal RFC-4180 CSV parser (quoted fields, escaped quotes, embedded newlines). */
+export function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') {
+      row.push(field);
+      field = '';
+    } else if (c === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else if (c !== '\r') field += c;
+  }
+  if (field !== '' || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** CSV text → events: { uid, summary, date, start, end, allDay } with local "HH:MM" times. */
+export function parseEventsCsv(text) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return [];
+  const header = rows[0].map((h) => h.trim());
+  const col = (r, name) => r[header.indexOf(name)] || '';
+  return rows
+    .slice(1)
+    .map((r) => {
+      const startDT = col(r, 'start.dateTime');
+      const endDT = col(r, 'end.dateTime');
+      // dateTime strings carry the school's local offset ("2026-10-05T10:00:00+02:00"),
+      // so date and wall-clock time are read straight from the string.
+      const allDay = !startDT;
+      return {
+        uid: col(r, 'uid'),
+        summary: col(r, 'summary').trim(),
+        date: allDay ? col(r, 'start.date') : startDT.slice(0, 10),
+        start: allDay ? null : startDT.slice(11, 16),
+        end: allDay ? null : endDT.slice(11, 16) || startDT.slice(11, 16),
+        allDay,
+      };
+    })
+    .filter((e) => e.uid && e.summary && /^\d{4}-\d{2}-\d{2}$/.test(e.date));
+}
+
+// --- Calendar API ---------------------------------------------------------------------------
 
 const API = 'https://www.googleapis.com/calendar/v3/calendars';
 const TZ = 'Europe/Rome';
@@ -20,7 +88,7 @@ export const CALENDAR_AHEAD_DAYS = Number(process.env.CALENDAR_AHEAD_DAYS) || 42
 
 export const calendarEnabled = () => Boolean(process.env.GOOGLE_CALENDAR_API_KEY && process.env.GOOGLE_CALENDAR_ID);
 
-const addDays = (s, n) => {
+export const addDays = (s, n) => {
   const d = new Date(`${s}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -114,4 +182,41 @@ export async function getCalendarEvents(today) {
 
   const events = [...state.items.values()].flatMap(toEvents).filter((e) => e.date >= from && e.date <= to);
   return { events, from, to };
+}
+
+/** Today's date at the school, "YYYY-MM-DD". */
+export function schoolToday(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(now);
+}
+
+async function loadCsv() {
+  const res = await fetch(CSV_URL, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) throw new Error(`Events CSV ${res.status}`);
+  return { events: parseEventsCsv(await res.text()), window: null, source: 'csv' };
+}
+
+/**
+ * All variations currently published, cached briefly. Each event gets its parsed fields merged in.
+ * Source: the Calendar API when configured (below), else the Sheet CSV; the CSV is
+ * also the fallback when the API fails. `window` is the date range the source covers
+ * ({from, to}), or null for the CSV (its range is set by the Apps Script).
+ */
+export async function getVariations() {
+  const { value, stale } = await eventsCache.get('events', async () => {
+    let loaded;
+    if (calendarEnabled()) {
+      try {
+        const { events, from, to } = await getCalendarEvents(schoolToday());
+        loaded = { events, window: { from, to }, source: 'calendar' };
+      } catch (err) {
+        log.warn('Calendar API failed, using the CSV', { error: err.message });
+      }
+    }
+    loaded ||= await loadCsv();
+    log.debug('Fetched variations', { count: loaded.events.length, source: loaded.source });
+    const variations = loaded.events.map((e) => ({ ...e, ...parseSummary(e.summary) }));
+    return { variations, window: loaded.window, source: loaded.source };
+  });
+  if (stale) log.warn('Serving stale variations');
+  return { ...value, stale };
 }

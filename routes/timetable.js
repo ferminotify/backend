@@ -10,8 +10,7 @@ import {
   upcomingEvents,
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
-import { matchKeywords } from '../utils/timetable/keywords.js';
-import { calendarSurnames } from '../utils/timetable/calendarNames.js';
+import { calendarSurnames, matchKeywords } from '../utils/timetable/match.js';
 import { forgetTicket, optionalSchoolTicket } from '../utils/schoolTicket.js';
 
 const router = express.Router();
@@ -19,7 +18,7 @@ const log = logger.child('timetable');
 
 // Teachers only for accounts logged in with Moodle that the school lets see them (ticket from
 // routes/moodle.js, routes/auth.js), fetched with that session. Everyone else: the surnames
-// the public calendar prints, for keyword suggestions only (utils/timetable/calendarNames.js).
+// the public calendar prints, for keyword suggestions only (utils/timetable/match.js).
 const canSeeTeachers = (req) => Boolean(req.schoolSession);
 
 // Public, read-only. Short browser cache: variations change during the day.
@@ -75,13 +74,8 @@ async function liveSchoolSession(req, res, next) {
   next();
 }
 
-// Before the session middleware: the notifier's Bearer key is not a user token.
-// --- Event search: "Cerca eventi", dashboard, notifier ------------------------------------
-// One endpoint, so a keyword finds the same events everywhere (rules: utils/timetable/keywords.js).
-// The notifier (Bearer NOTIFICATION_API_KEY, as /user/push/notify) only skips the limits:
-// it asks for every user's keywords at once, every few minutes.
-const SEARCH_MAX_KEYWORDS = 20000;
-const PUBLIC_MAX_KEYWORDS = 20;
+const SEARCH_MAX_KEYWORDS = 20000; // notifier req up to 20k keywords
+const PUBLIC_MAX_KEYWORDS = 20; // public users req at most 20 keywords
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function isNotifier(req) {
@@ -98,13 +92,13 @@ function isNotifier(req) {
  *       matches: { keyword: [uid] }, optional: { keyword: { category: [uid] } }, source, stale }
  * No keywords: every event of those days. With keywords: the events any of them finds,
  * opt-in activities included (`optional`: help desks… reaching the keyword's class only through
- * its year/group, utils/timetable/optIn.js; the notifier sends them only to who chose them).
+ * its year/group, utils/timetable/match.js; the notifier sends them only to who chose them).
  * Public: only the public calendar's titles and uids, never the school's teacher list.
  */
 router.post('/search', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const notifier = isNotifier(req);
-  if (!notifier && req.headers.authorization) return res.status(401).json({ error: 'Unauthorized' });
+  if (req.headers.authorization && !notifier) return res.status(401).json({ error: 'Unauthorized' });
   const { keywords = [], from, to } = req.body || {};
   if (!Array.isArray(keywords)) return res.status(400).json({ error: 'keywords must be an array' });
   if ((from != null && !ISO_DAY.test(from)) || (to != null && !ISO_DAY.test(to))) {
@@ -117,7 +111,7 @@ router.post('/search', async (req, res) => {
   const kws = [...new Set(keywords.filter((k) => typeof k === 'string' && k.trim()).map((k) => k.slice(0, 100)))];
   try {
     const started = Date.now();
-    const { events: upcoming, source, stale } = await upcomingEvents();
+    const { events: upcoming, source, stale } = await upcomingEvents(); // here
     const inRange = upcoming.filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
     if (!kws.length) return res.json({ events: inRange, matches: {}, optional: {}, source, stale });
     const { matches, optional } = await matchKeywords(inRange, kws);

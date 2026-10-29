@@ -1,7 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import logger from '../utils/logger.js';
-import { jointKeywords } from '../utils/timetable/keywords.js';
+import { jointKeywords } from '../utils/timetable/match.js';
 
 const router = express.Router();
 const log = logger.child('keyword');

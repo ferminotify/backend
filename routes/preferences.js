@@ -3,7 +3,7 @@ import express from 'express';
 import pool from '../db.js';
 import dotenv from 'dotenv';
 import logger from '../utils/logger.js';
-import { OPT_IN, cleanOptIn } from '../utils/timetable/optIn.js';
+import { OPT_IN, cleanOptIn } from '../utils/timetable/match.js';
 dotenv.config();
 
 const router = express.Router();
