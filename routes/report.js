@@ -74,7 +74,7 @@ function tint(hex, pct) {
 }
 
 /** Validated card from the page (strings only, capped), or null. */
-export function readCard(card) {
+function readCard(card) {
   if (!card || typeof card !== 'object' || !TONES[card.tone]) return null;
   const lines = Array.isArray(card.lines)
     ? card.lines
@@ -95,7 +95,7 @@ export function readCard(card) {
   };
 }
 
-export function cardHtml(c) {
+function cardHtml(c) {
   const t = TONES[c.tone];
   const color = c.plain ? null : c.color;
   const bg = t.bg || (color ? tint(color, 16) : '#f3f3f3');

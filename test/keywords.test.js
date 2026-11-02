@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyKeyword, cleanOptIn, eventMatch, eventMatches, jointCalendarName, keywordWords, optInCategory, schoolYearStart, surnamesFromTitles } from '../utils/timetable/match.js';
+import { classifyKeyword, cleanOptIn, eventMatch, jointCalendarName, keywordWords, optInCategory, schoolYearStart, surnamesFromTitles } from '../utils/timetable/match.js';
 import { parseSummary } from '../utils/timetable/parse.js';
+
+const eventMatches = (v, k) => Boolean(eventMatch(v, k));
 
 const lists = {
   classKeys: new Set(['1AIIN', '1BIIN', '3MENE', '3ITEL', '3MENEITEL', '5CIIN']),
@@ -40,23 +42,23 @@ test('keywords: surnames, rooms and plain words', () => {
 });
 
 test('keywords: the whole name tells homonyms apart', () => {
-  const homonyms = { ...lists, teacherNames: ['Vighi Cristina', 'Vighi Giulia'] };
+  const homonyms = { ...lists, teacherNames: ['Clarabella Cristina', 'Clarabella Giulia'] };
   const hitH = (kw, summary) => eventMatches(ev(summary), classifyKeyword(kw, homonyms));
-  assert.deepEqual(classifyKeyword('VIGHI GIULIA', homonyms).teachers, ['Vighi Giulia']);
-  assert.ok(hitH('VIGHI GIULIA', 'CLASSI 4^ IT - AULA 14 - SPORTELLO MATEMATICA - PROF. VIGHI G.'));
-  assert.ok(hitH('VIGHI GIULIA', 'CLASSE 4A - PROF.SSA VIGHI GIULIA'));
-  assert.ok(hitH('VIGHI GIULIA', 'CLASSE 4A - AULA IMMERSIVA - PROF. SSA VIGHI'));
-  assert.ok(hitH('VIGHI GIULIA', 'CLASSE 5CIIN - AULA 13 - PROF. ROSSI (PROF. VIGHI G.: ASSENTE)'));
-  assert.ok(!hitH('VIGHI GIULIA', 'CLASSE 2AEL - PROF. SSA VIGHI C.'));
-  assert.ok(!hitH('VIGHI GIULIA', 'CLASSE 2AEL - PROF.SSA VIGHI CRISTINA'));
-  assert.ok(hitH('VIGHI', 'CLASSE 2AEL - PROF. SSA VIGHI C.'));
-  assert.ok(hitH('VIGHI', 'CLASSI 4^ IT - SPORTELLO MATEMATICA - PROF. VIGHI G.'));
+  assert.deepEqual(classifyKeyword('CLARABELLA GIULIA', homonyms).teachers, ['Clarabella Giulia']);
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSI 4^ IT - AULA 14 - SPORTELLO MATEMATICA - PROF. CLARABELLA G.'));
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSE 4A - PROF.SSA CLARABELLA GIULIA'));
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSE 4A - AULA IMMERSIVA - PROF. SSA CLARABELLA'));
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSE 5CIIN - AULA 13 - PROF. ROSSI (PROF. CLARABELLA G.: ASSENTE)'));
+  assert.ok(!hitH('CLARABELLA GIULIA', 'CLASSE 2AEL - PROF. SSA CLARABELLA C.'));
+  assert.ok(!hitH('CLARABELLA GIULIA', 'CLASSE 2AEL - PROF.SSA CLARABELLA CRISTINA'));
+  assert.ok(hitH('CLARABELLA', 'CLASSE 2AEL - PROF. SSA CLARABELLA C.'));
+  assert.ok(hitH('CLARABELLA', 'CLASSI 4^ IT - SPORTELLO MATEMATICA - PROF. CLARABELLA G.'));
 });
 
 test('opt-in categories: help desks and the like for a whole year are set apart', () => {
   const how = (kw, summary) => eventMatch(ev(summary), classifyKeyword(kw, lists));
   assert.equal(optInCategory('CLASSI 1^ IT - AULA 10 - SPORTELLO FISICA - PROF. ROSSI'), 'sportelli');
-  assert.equal(optInCategory('AULA 6 - PEER TUTORING FISICA - TUTOR MANNA (3A) - CLASSI PRIME'), 'tutoring');
+  assert.equal(optInCategory('AULA 6 - PEER TUTORING FISICA - TUTOR QUA (3A) - CLASSI PRIME'), 'tutoring');
   assert.equal(optInCategory('SALA EROS - OLIMPIADI DELLA MATEMATICA - CLASSI TRIENNIO'), 'olimpiadi');
   assert.equal(optInCategory('AULA 5 - INCONTRO DS CON RAPPRESENTANTI CLASSI 1^'), 'rappresentanti');
   assert.equal(optInCategory('PROGETTO ERASMUS - CLASSI QUARTE IT (2 STUDENTI PER CIASCUNA CLASSE)'), 'few');

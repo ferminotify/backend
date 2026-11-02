@@ -4,7 +4,7 @@
 //   "CLASSI 5C, 5D, 5E - USCITA DIDATTICA - PROFF. ..."
 // into a structured variation the merge step can apply to a timetable, and scores how sure
 // that reading is (assessSummary).
-import { editDistance, entityKey, roomNumber, sameClassKey, sameRoom } from './normalize.js';
+import { baseClassKey, editDistance, entityKey, plainUpper, sameClassKey, sameRoom, titleCase, upperText } from './normalize.js';
 
 // Each kind lists word sequences; a title matches when the words appear consecutively,
 // each within a small edit distance (see fuzzyEqual), so typos like "USCITA ANTICPATA"
@@ -37,18 +37,16 @@ function hasPhrase(tokens, phrase) {
 }
 
 const kindTokens = (upper) =>
-  upper
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+  plainUpper(upper)
     .split(/[^A-Z0-9]+/)
     .filter((t) => t && !FILLER.has(t));
 
-/** First kind whose words appear in the title, or undefined. */
 // "LEZIONE DAD DI FISICA SOSPESA", "SOSPENSIONE DELLE LEZIONI": no lesson at all.
 const SUSPENDED = /\bLEZION\w*\b.*\bSOSPES[AOIE]\b|\bSOSPENSION\w*\b.*\bLEZION/;
 const SUSPENDED_KIND = { kind: 'off', label: 'Lezione sospesa' };
 
-export function matchKind(upper) {
+/** First kind whose words appear in the title, or undefined. */
+function matchKind(upper) {
   if (SUSPENDED.test(upper)) return SUSPENDED_KIND;
   const tokens = kindTokens(upper);
   return KINDS.find((k) => k.words.some((phrase) => hasPhrase(tokens, phrase)));
@@ -63,12 +61,6 @@ function kindHasTypo(upper) {
 }
 
 const ROOM_RE = /^(AULA|AULE|LAB(?:ORATORIO)?|FABLAB|PALESTRA|SALA|SALONE|MENSA|BIBLIOTECA|AUDITORIUM|CORTILE|LOCALE|AREA|SEGGIO|DI ?FRONTE|DAVANTI)\b/;
-
-const titleCase = (s) =>
-  s
-    .toLowerCase()
-    .replace(/(^|[\s'(.-])(\p{L})/gu, (_, sep, ch) => sep + ch.toUpperCase())
-    .trim();
 
 // Short words that are not acronyms ("ALUNNI DI IRC" → "alunni di IRC").
 const SMALL_WORDS = new Set(['DI', 'DA', 'E', 'ED', 'IN', 'CON', 'PER', 'NON', 'DEL', 'DELLA', 'DELLE', 'GLI', 'LE', 'I', 'AL', 'ALLA']);
@@ -92,7 +84,7 @@ function sentenceLabel(text) {
 }
 
 // A segment naming the classes: "CLASSE 3A", "CLASSI 5C, 5D", with an optional group of
-// students first: "ALUNNO B. F. CLASSE 3CIIN", "ALUNNI IRC DELLE CLASSI 2BIN, 1B".
+// students first: "ALUNNO X. Y. CLASSE 3CIIN", "ALUNNI IRC DELLE CLASSI 2BIN, 1B".
 // Other words before CLASSE ("CONSIGLIO DI CLASSE 5B") are a meeting, not the class.
 const CLASS_SEGMENT = /^(?:((?:ALUNN[OIAE]|STUDENT[EI]|STUDENTESS[AE])\b.*?)\s+(?:DELL[AE]\s+)?)?CLASS[EI]\s*:?\s+(.+)$/;
 const CANCELLED = /^ANNULLAT[AOIE]\b\s*/;
@@ -122,7 +114,6 @@ export function splitSegments(upper) {
   return out.map((x) => x.replace(/^[\s-]+|[\s-]+$/g, '').trim()).filter(Boolean);
 }
 
-// Words before CLASSE that make it a meeting about the class, not the class itself.
 // --- whole years: "CLASSI 1^ LICEO", "CLASSI 3^-4^ IT", "CLASSI QUARTE", "TRIENNIO" ---------
 const ORDINALS = { PRIME: '1', SECONDE: '2', TERZE: '3', QUARTE: '4', QUINTE: '5' };
 const SPANS = { BIENNIO: ['1', '2'], TRIENNIO: ['3', '4', '5'] };
@@ -149,7 +140,7 @@ const FILLER_WORDS = new Set(['TUTTE', 'LE', 'CORSO', 'INDIRIZZO', 'DI', 'DEL', 
  * @returns {null | {year: string, track: 'liceo'|'it'|'serale'|'other'|null, course: string|null}[]}
  *   track null = any; 'other' = words we cannot place (not applied)
  */
-export function parseLevels(text) {
+function parseLevels(text) {
   const words = text.replace(/\([^)]*\)/g, ' ').replace(/(\d)\s*\^/g, '$1^ ').split(/[\s,\-/]+|\bE\b/).filter(Boolean);
   const years = [];
   let track = null;
@@ -174,8 +165,8 @@ export function parseLevels(text) {
 }
 
 /** Track of a school-site class key: "1A" → liceo; "3SIIN" → serale; "1CIN", "4EELEE" → it. */
-export function classTrack(classKey) {
-  const k = classKey.replace(/GRUPPO.*$/, '');
+function classTrack(classKey) {
+  const k = baseClassKey(classKey);
   if (/^[1-5][A-Z]$/.test(k)) return 'liceo';
   return /^[1-5]S[A-Z]{2,}/.test(k) ? 'serale' : 'it';
 }
@@ -187,26 +178,27 @@ export function levelCovers(level, classKey) {
   // A course implies a technical class (day or evening), never liceo.
   const track = classTrack(classKey);
   if (level.track ? level.track !== track : level.course && track === 'liceo') return false;
-  return !level.course || classKey.replace(/GRUPPO.*$/, '').slice(2).includes(level.course);
+  return !level.course || baseClassKey(classKey).slice(2).includes(level.course);
 }
 
+// Words before CLASSE that make it a meeting about the class, not the class itself.
 const MEETING_BEFORE_CLASS = /\b(CONSIGLI|RIUNION|COORDINATOR|GENITORI|ASSEMBLEA|COLLOQU)\w*\b.*$|\b(DI|DELLA|DEI)$/;
-// A teacher's title: "PROF. ", "PROFF.", "PROF.ssa ", "PROF. ssa", "PROF.D'ECCLESIIS" (no space
+// A teacher's title: "PROF. ", "PROFF.", "PROF.ssa ", "PROF. ssa", "PROF.D'AMELIA" (no space
 // after the dot), "PROF" alone ("PROF- ROSSI"), typos ("PROPF.", "PRF.", "PTOF.", "PRORF."), "ING.", "SIG .", "DOTT.",
-// optionally after "REF.", "REFERENTE", "COORDINATORE", "MIT" ("MIT DOTT. JAVED").
+// optionally after "REF.", "REFERENTE", "COORDINATORE", "MIT" ("MIT DOTT. LUDWIG").
 // "REF." alone also names the person in charge ("REF. ROSSI").
 const TITLE = /(?:P[RT]O?R?P?FF?(?:\.?\s?SS[AE])?|PRO(?=\.)|PORF|ING|SIG(?:R[AI])?|DOTT(?:\.?SS[AE])?)(?:\s*[.,]\s*|\s+|$)/;
 const LEAD = /(?:REFF?(?:ERENTE)?|COORDINATOR[EI]|MIT)(?:\s*\.\s*|\s+)/;
 const PROF_START = new RegExp(`^(?:${LEAD.source})*(?:${TITLE.source})|^REF(?:ERENTE)?(?:\\s*\\.\\s*|\\s+)`);
 const TITLE_AT_START = new RegExp(`^${TITLE.source}`);
-// "E. CIRANNA", "M. BERTOGNA": an initial and a surname, a speaker named without a title.
+// "E. PIPPO", "M. PLUTO": an initial and a surname, a speaker named without a title.
 const INITIAL_NAME = /(?:^|,\s*)([A-Z]\.\s?[A-Z'’]{2,}(?:\s[A-Z'’]{2,})?)$/;
 // "PRIMO GRUPPO", "SECONDO GRUPPO GRUPPO" (typo): part of the classes.
 const GROUP_SEGMENT = /^(PRIMO|SECONDO|TERZO|QUARTO)\s+GRUPPO\b/;
 // Parentheses that are details, not part of the activity's name.
 const DROP_PAREN = /AS+ENT|PROF|REF|ALUNN|STUDENT|\bNON\b|\bORE\b|FINO|DALLE|ALLE\b|VEDI|ANTICIP|POSTICIP/;
 
-/** A segment that is only a surname or two ("DELLA ROCCA", "FERRARI S."). */
+/** A segment that is only a surname or two ("DELLA PAPERA", "GAMBADILEGNO S."). */
 function looksLikeName(seg) {
   const s = seg.replace(/\([^)]*\)/g, '').trim();
   return /^[A-Z'’. ]+$/.test(s) && s.split(/\s+/).length <= 3 && !ROOM_RE.test(s) && !matchKind(s) && !/^(TUTOR|SIG|DOTT|CLASS)/.test(s);
@@ -221,7 +213,7 @@ function looksLikeName(seg) {
  * `cancelled`: the title starts with "ANNULLATA": the variation no longer applies.
  */
 export function parseSummary(summary) {
-  let upper = summary.toUpperCase().replace(/\s+/g, ' ').trim();
+  let upper = upperText(summary);
   const cancelled = CANCELLED.test(upper);
   if (cancelled) upper = upper.replace(CANCELLED, '').replace(/^-\s*/, '');
   // "CLASE 4CIIN", "CLSSE 4EELE", "CLASS 1CME", "CLADDE 5EELE": "CLASSE" with a typo, before a class.
@@ -232,8 +224,6 @@ export function parseSummary(summary) {
   upper = upper.replace(/\bAULA\s+(?=[1-5][A-Z]{2,}\b)/g, 'CLASSE ');
   const cancelledEnd = CANCELLED_END.test(upper);
   if (cancelledEnd) upper = upper.replace(CANCELLED_END, '');
-  // " - " separates segments; also with a space on one side only ("CLASSE 3BMME- AULA 360").
-  // A dash between letters/digits stays: "AULA 1-3 DEBATE".
   const segments = splitSegments(upper)
     // A class named inside another segment ("PEER TUTORING MATEMATICA CLASSE 3MENE") gets its
     // own. A meeting keeps its name: "CONSIGLIO DI CLASSE 1CIN" → "CONSIGLIO DI CLASSE", "CLASSE 1CIN".
@@ -327,7 +317,7 @@ export function parseSummary(summary) {
   const absent = [];
   for (const [, inner] of upper.matchAll(/\(([^)]*AS+ENT[EI][^)]*)\)/g)) {
     const names = inner.replace(/:?\s*AS+ENT[EI]/, '').trim().replace(PROF_START, '');
-    // "(PROFF. ARENA E DESINA: ASSENTI)", "(PROF. ssa ROSSI ASSENTE)"
+    // "(PROFF. TIZIA E CAIA: ASSENTI)", "(PROF. ssa ROSSI ASSENTE)"
     absent.push(...names.split(/,|\s+E\s+/).map((n) => titleCase(n.trim().replace(TITLE_AT_START, ''))).filter(Boolean));
   }
 
@@ -361,7 +351,7 @@ export function parseSummary(summary) {
   for (const [, inner] of upper.matchAll(/\(([^)]*)\)/g)) {
     if (!/AS+ENT/.test(inner) && PROF_START.test(inner.trim())) addNames(inner.trim().replace(PROF_START, ''));
   }
-  // "… - E. CIRANNA", "\"DRONI, ROBOT\", M. BERTOGNA": a speaker without a title, at the end.
+  // "… - E. PIPPO", "\"DRONI, ROBOT\", M. PLUTO": a speaker without a title, at the end.
   segments.forEach((seg, i) => {
     if (used.has(i) || i >= named) return;
     const m = noParens(seg).match(INITIAL_NAME);
@@ -380,7 +370,7 @@ export function parseSummary(summary) {
       addNames(noParens(seg));
     });
   }
-  // Peer tutoring: "TUTOR SACCANI 5CBIO", "TUTOR: MARAGNI (3BIIN)". The tutor counts as the
+  // Peer tutoring: "TUTOR GONGO 5CBIO", "TUTOR: FILO (3BIIN)". The tutor counts as the
   // teacher; their own class is not one of the classes involved, unless no other is named.
   let tutorClass = null;
   segments.forEach((seg, i) => {
@@ -439,7 +429,7 @@ export function parseSummary(summary) {
     }
     if (CLASS_SEGMENT.test(clean)) return; // the classes named again
     if (/^(PROF|REF\b|SIG\w*\b|DOTT\w*\b|ORE\b|DALLE\b|ALLE\b)/.test(clean)) return;
-    // The kind's own words are the badge; a visit keeps its details ("VISITA AZIENDALE PIUSI").
+    // The kind's own words are the badge; a visit keeps its details ("VISITA AZIENDALE ACME").
     const k = matchKind(clean);
     if (k && k.kind !== 'off' && !(k.label === 'Uscita didattica' && /^VISITA\b/.test(clean))) return;
     // Parentheses that name something stay: "VISIONE PROVE SC. INTEGRATE (CHIMICA)".
@@ -451,7 +441,6 @@ export function parseSummary(summary) {
     kind: kindDef?.kind || 'change',
     label: kindDef?.label || null,
     room: room ? titleCase(room) : null,
-    roomNumber: room ? roomNumber(noParens(room)) : null,
     // "CORSO SERALE - CLASSI TERZE MECCANICA": the evening school.
     levels: /\bSERAL[EI]\b/.test(upper) ? levels.map((l) => (l.track === null ? { ...l, track: 'serale' } : l)) : levels,
     group,
@@ -476,15 +465,15 @@ const CLASS_TOKEN = /\b[1-5][A-Z]{1,8}\b/;
 /**
  * @param {string} summary  event title
  * @param {object} parsed   parseSummary(summary)
- * @param {{classes?:{key,name}[], rooms?:{key,name}[], teachers?:{key,name}[]|null}} index  school timetable entities
+ * @param {{classes?:{key,name}[], rooms?:{key,name}[]}} index  school timetable entities
  * @returns {{score:number, issues:{code:string, text:string, penalty:number}[]}}
  */
 export function assessSummary(summary, parsed, index = {}) {
   const issues = [];
   const add = (code, text, penalty) => issues.push({ code, text, penalty });
-  const upper = summary.toUpperCase().replace(/\s+/g, ' ').trim();
+  const upper = upperText(summary);
   const segments = splitSegments(upper);
-  // A CLASSE segment anywhere ("ALUNNO B. F. CLASSE 3CIIN", "AULA 620 - CLASSE 1AME")
+  // A CLASSE segment anywhere ("ALUNNO X. Y. CLASSE 3CIIN", "AULA 620 - CLASSE 1AME")
   const head = segments.some((seg) => /^(?:ALUNN\w*\b.*?\s)?CLASS[EI]\s/.test(seg));
   const classKeys = (index.classes || []).map((c) => c.key);
 
@@ -535,15 +524,6 @@ export function assessSummary(summary, parsed, index = {}) {
   // Teachers
   if (/\bPROF/.test(upper) && !parsed.teachers.length && !parsed.absent.length) {
     add('prof_empty', 'C’è “PROF.” ma nessun nome leggibile', 10);
-  }
-  if (index.teachers?.length) {
-    const words = (s) => s.toUpperCase().split(/\s+/).map(entityKey).filter(Boolean);
-    const known = index.teachers.map((t) => words(t.name));
-    const missing = [...parsed.teachers, ...parsed.absent].filter((n) => {
-      const w = words(n);
-      return !known.some((k) => w.every((x) => k.includes(x)));
-    });
-    missing.slice(0, 2).forEach((n) => add('teacher_not_found', `Docente “${n}” non trovato`, 10));
   }
 
   // A class with nothing that says what changes

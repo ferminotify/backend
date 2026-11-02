@@ -36,5 +36,5 @@ export function createCache({ ttlMs, maxEntries = 500 }) {
   /** The last value stored for `key`, however old, without loading; undefined if none. */
   const peek = (key) => entries.get(key)?.value;
 
-  return { get, peek, clear: () => entries.clear() };
+  return { get, peek };
 }

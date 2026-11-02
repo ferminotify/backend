@@ -5,7 +5,7 @@ import { assessSummary } from './parse.js';
 import { jointClasses, jointsOf, teacherContext } from './match.js';
 import { buildWeek } from './week.js';
 
-export { ALL_TYPES, getIndex, schoolToday, sessionSeesTeachers, SchoolSessionExpired };
+export { ALL_TYPES, getIndex, sessionSeesTeachers, SchoolSessionExpired };
 export { loginWith, logoutSession, SchoolLoginError } from './school.js';
 
 // The Sheet CSV (fallback source) holds events from yesterday to today + 3 days
@@ -34,20 +34,20 @@ export function variationsWindow(today) {
 let assessed = { index: null, bySummary: new Map() };
 
 /**
- * Adds `reading` to each variation: { score, issues }, how sure the parser is (assessSummary).
+ * Adds `reading` to each variation: { score }, how sure the parser is (assessSummary).
  * Below 60 the timetable says the title was hard to read.
+ * @param {object|null} pub  public index (getIndex), null when unavailable
  */
-async function withReadings(variations) {
-  const pub = await getIndex().catch(() => null);
-  const idx = pub ? { classes: pub.class || [], rooms: pub.room || [] } : { classes: [], rooms: [] };
+function withReadings(variations, pub) {
+  const idx = { classes: pub?.class || [], rooms: pub?.room || [] };
   if (assessed.index !== pub) assessed = { index: pub, bySummary: new Map() };
   return variations.map((v) => {
-    let base = assessed.bySummary.get(v.summary);
-    if (!base) {
-      base = assessSummary(v.summary, v, idx);
-      assessed.bySummary.set(v.summary, base);
+    let score = assessed.bySummary.get(v.summary);
+    if (score === undefined) {
+      score = assessSummary(v.summary, v, idx).score;
+      assessed.bySummary.set(v.summary, score);
     }
-    return { ...v, reading: { score: base.score, issues: base.issues } };
+    return { ...v, reading: { score } };
   });
 }
 
@@ -66,26 +66,27 @@ export async function getWeek(type, ref, { date, authed = false, session } = {})
   if (!entity) return null;
 
   const today = schoolToday();
-  const [{ table, stale: tableStale }, { variations: rawVariations, window: sourceWindow, stale: variationsStale }] = await Promise.all([
+  const [{ table, stale: tableStale }, { variations: rawVariations, window: sourceWindow, stale: variationsStale }, pub] = await Promise.all([
     getTable(type, entity.id, { authed: useAuthed, session }).catch((err) => {
       if (!useAuthed || type === 'teacher' || err instanceof SchoolSessionExpired) throw err;
       return getTable(type, entity.id); // school login down: public data, without teachers
     }),
     getVariations(),
+    getIndex().catch(() => null),
   ]);
 
   const window = sourceWindow || variationsWindow(today);
-  const variations = await withReadings(rawVariations);
+  const variations = withReadings(rawVariations, pub);
   const lastWeekday = Math.max(5, ...table.weekdays);
   // The week shown when no date is asked for: this one, or the next after the last school day.
   const currentWeek = weekStart(today, lastWeekday);
   const monday = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? weekStart(date, lastWeekday) : currentWeek;
   const days = Array.from({ length: lastWeekday }, (_, i) => {
     const d = addDays(monday, i);
-    return { date: d, weekday: i + 1, published: d >= window.from && d <= window.to };
+    return { date: d, weekday: i + 1, published: d >= window.from && (!window.to || d <= window.to) };
   });
 
-  const classIndex = (await getIndex().catch(() => null))?.class || [];
+  const classIndex = pub?.class || [];
   const knownClasses = new Set(classIndex.map((c) => c.key));
   // A part of a joint class: its timetable lacks the hours taught together, added below.
   const joints = (type === 'class' ? jointsOf(entity.key, knownClasses) : [])
@@ -98,7 +99,7 @@ export async function getWeek(type, ref, { date, authed = false, session } = {})
   const jointTable = (id, opts) => getTable('class', id, opts).then((r) => r.table, () => null);
   // Everything else at once: on a cold cache these are separate school-site pages.
   const [teacherIndex, ownWithTeachers, jointTables] = await Promise.all([
-    // Teachers' names, to tell homonyms and typos ("BOTAZZI") apart: only on teacher pages.
+    // Teachers' names, to tell homonyms and typos ("PAPEONE") apart: only on teacher pages.
     type === 'teacher' ? getIndex({ authed: true, session }).catch(() => null) : null,
     needTeachers ? getTable(type, entity.id, { authed: true }).then((r) => r.table, () => null) : null,
     Promise.all(
@@ -154,15 +155,18 @@ function withJointLessons(table, jointTable, otherPart) {
 }
 
 /**
- * "Cerca eventi": the calendar events from today on, as published (no parsing applied),
- * sorted by day and time. Same source and cache as the timetable (Calendar API, else the CSV).
+ * "Cerca eventi": the calendar events from today (or `from`, if later) to `to`, as published
+ * (no parsing applied), sorted by day and time. Same source and cache as the timetable
+ * (Calendar API, else the CSV).
+ * @param {{ from?: string, to?: string }} [range]  YYYY-MM-DD, both included
  * @returns {Promise<{ events: object[], source: string, stale: boolean }>}
  */
-export async function upcomingEvents() {
+export async function upcomingEvents({ from, to } = {}) {
   const { variations, source, stale } = await getVariations();
   const today = schoolToday();
+  const start = from && from > today ? from : today;
   const events = variations
-    .filter((v) => v.date >= today)
+    .filter((v) => v.date >= start && (!to || v.date <= to))
     .map(({ uid, summary, date, start, end, allDay }) => ({ uid, summary, date, start, end, allDay }))
     .sort((a, b) => a.date.localeCompare(b.date) || (a.start || '').localeCompare(b.start || '') || (a.end || '').localeCompare(b.end || ''));
   return { events, source, stale };

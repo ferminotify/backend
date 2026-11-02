@@ -18,7 +18,7 @@ export function clientIp(req) {
 }
 
 /** `limited(key)` counts an attempt: true when over `max` in `windowMs` (from the first one). */
-export function createLimiter({ windowMs, max, maxKeys = 10000 }) {
+function createLimiter({ windowMs, max, maxKeys = 10000 }) {
   const hits = new Map(); // key -> { count, reset }
   return function limited(key) {
     const now = Date.now();

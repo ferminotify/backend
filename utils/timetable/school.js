@@ -3,7 +3,7 @@
 // there is no API and no CORS, so the backend fetches and converts it to JSON.
 import logger from '../logger.js';
 import { createCache } from './cache.js';
-import { entityKey } from './normalize.js';
+import { entityKey, titleCase } from './normalize.js';
 
 const log = logger.child('timetable:school');
 
@@ -21,7 +21,7 @@ export function isPlaceholderTeacher(name) {
 }
 
 // Public types; 'teacher' exists only on the logged-in site.
-export const ENTITY_TYPES = ['class', 'room'];
+const ENTITY_TYPES = ['class', 'room'];
 export const ALL_TYPES = [...ENTITY_TYPES, 'teacher'];
 
 const WEEKDAYS = ['lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
@@ -44,7 +44,7 @@ const textOf = (html) => decodeEntities(String(html).replace(/<[^>]+>/g, '')).re
 
 /**
  * Entries of a cell line, one per <br>. The site wraps long names with "<br> " (a space
- * after the break): "DEL PROPOSTO<br> LUIGINO GIOVANNI" is one teacher, while
+ * after the break): "DEL PAPERIS<br> PICO LUDOVICO" is one teacher, while
  * "Aula 619 Disegno B<br>Lab 609 CAD" are two rooms.
  */
 export function brEntries(html) {
@@ -57,8 +57,6 @@ export function brEntries(html) {
   }
   return out;
 }
-
-const titleCase = (s) => s.toLowerCase().replace(/(^|[\s'(.-])(\p{L})/gu, (_, sep, ch) => sep + ch.toUpperCase());
 
 // `session`: a user's school session (see loginWith below), needed when `authed`.
 async function fetchPage(query = '', { authed = false, session } = {}) {
@@ -73,8 +71,8 @@ async function fetchPage(query = '', { authed = false, session } = {}) {
 }
 
 /**
- * Lists of classes and rooms from the two <select>s on the page.
- * @returns {{ class: Array<{id,name,key}>, room: Array<{id,name,key}> }}
+ * Lists of classes and rooms (and teachers, on the logged-in page) from the <select>s on the page.
+ * @returns {{ class: Array<{id,name,key}>, room: Array<{id,name,key}>, teacher: Array<{id,name,key}> }}
  */
 export function parseIndex(html) {
   const index = {};
@@ -181,11 +179,11 @@ export function parseTable(html, { type = 'class', withTeachers = false } = {}) 
 
 /**
  * Classes and rooms (public page), plus teachers when `authed` (logged-in page).
+ * Logged-in pages are the same for every account that can see them, so the cache is
+ * shared: whichever session misses first fetches for everybody. Without a session, only
+ * what is cached (Cerca eventi, notifier); throws if nothing is.
  * @returns {{ class, room, teacher? }}
  */
-// Logged-in pages are the same for every account that can see them, so the cache is
-// shared: whichever session misses first fetches for everybody. Without a session, only
-// what is cached (Cerca eventi, notifier); throws if nothing is.
 export async function getIndex({ authed = false, session } = {}) {
   if (authed && !session) return cachedOnly(indexCache, 'authed');
   const { value, stale } = await indexCache.get(authed ? 'authed' : 'public', async () => {
@@ -233,10 +231,10 @@ export async function getTable(type, id, { authed = false, session } = {}) {
 //
 // Login flow: GET /_util/login/ (csrftoken cookie + hidden csrfmiddlewaretoken),
 // POST the form with Referer (Django checks it on HTTPS) → 302 + sessionid cookie.
-const ORIGIN = new URL(process.env.TIMETABLE_URL || 'https://www.fermimn.edu.it/orario/').origin;
+const ORIGIN = new URL(BASE_URL).origin;
 const LOGIN_URL = `${ORIGIN}/_util/login/`;
 // Sent with every request to the school site.
-export const BROWSER_HEADERS = {
+const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Mobile Safari/537.36',
   'sec-ch-ua': '"Brave";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
   'sec-ch-ua-mobile': '?1',
@@ -257,6 +255,7 @@ function storeCookies(res, jar) {
 }
 
 const cookieHeader = (jar) => [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+const sessionCookie = (session) => cookieHeader(new Map(Object.entries(session)));
 
 /**
  * Logs in with the given credentials. Returns the session cookies ({ sessionid, csrftoken }).
@@ -302,10 +301,10 @@ const isLoggedInPage = (html) => html.includes(`action="${LOGOUT_PATH}"`);
  * GET a page of the school site with a user's session (their cookies).
  * A rejected session throws SchoolSessionExpired.
  */
-export async function fetchAuthed(url, { session }) {
+async function fetchAuthed(url, { session }) {
   const res = await fetch(url, {
     redirect: 'manual',
-    headers: { ...BROWSER_HEADERS, Cookie: cookieHeader(new Map(Object.entries(session))) },
+    headers: { ...BROWSER_HEADERS, Cookie: sessionCookie(session) },
     signal: AbortSignal.timeout(15000),
   });
   if (!isLoginRedirect(res) && !res.ok) throw new Error(`School page ${res.status} for ${url}`);
@@ -326,7 +325,7 @@ export async function logoutSession(session) {
       headers: {
         ...BROWSER_HEADERS,
         'Content-Type': 'application/x-www-form-urlencoded',
-        Cookie: cookieHeader(new Map(Object.entries(session))),
+        Cookie: sessionCookie(session),
         Referer: `${ORIGIN}/orario/`,
         Origin: ORIGIN,
       },

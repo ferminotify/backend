@@ -7,6 +7,32 @@ export function entityKey(name) {
   return String(name || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+/** Uppercase without accents: "Pippò" → "PIPPO". */
+export function plainUpper(s) {
+  return String(s || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+/** Uppercase with single spaces: "  Classe   3A " → "CLASSE 3A". */
+export function upperText(s) {
+  return String(s || '').toUpperCase().replace(/\s+/g, ' ').trim();
+}
+
+/** "PAPERONE STEFANO" → "Paperone Stefano", "D'AMELIA" → "D'Amelia". */
+export function titleCase(s) {
+  return String(s)
+    .toLowerCase()
+    .replace(/(^|[\s'(.-])(\p{L})/gu, (_, sep, ch) => sep + ch.toUpperCase())
+    .trim();
+}
+
+/** A class key without its group: "1QINGRUPPO1" → "1QIN". */
+export function baseClassKey(classKey) {
+  return classKey.replace(/GRUPPO.*$/, '');
+}
+
 /** Levenshtein distance, stopping early once it exceeds `max`. */
 export function editDistance(a, b, max) {
   if (Math.abs(a.length - b.length) > max) return max + 1;
@@ -50,10 +76,7 @@ const ROOM_KIND_WORDS = new Set(['AULA', 'LAB', 'LABORATORIO', 'SALA', 'PALESTRA
 
 /** Distinctive words of a room name: "Aula 1-3 Debate" → ["DEBATE"], "Sala mensa" → ["MENSA"]. */
 function roomWords(name) {
-  return String(name || '')
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+  return plainUpper(name)
     .split(/[^A-Z]+/)
     .filter((w) => w.length > 1 && !ROOM_KIND_WORDS.has(w));
 }

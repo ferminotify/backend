@@ -1,9 +1,12 @@
 // Fetches timetable variations: the Calendar API when GOOGLE_CALENDAR_API_KEY is set,
 // else Google Sheet in CSV 
 //
-// A full read of the window (~3000 events) runs hourly; in between, every
+// Window: from 13 days ago, every future event (the past, ~140k events since 2023, is not read).
+// A full read of the window runs hourly; in between, every
 // EVENTS_TTL_MS only the events changed since the last read are fetched
 // (updatedMin + showDeleted), usually none.
+// Risk: with no end date, a recurring event without an end (singleEvents) expands into every
+// occurrence; reads stop at MAX_PAGES × 2500 events, logged as "Calendar read cut".
 import logger from '../logger.js';
 import { createCache } from './cache.js';
 import { parseSummary } from './parse.js';
@@ -18,7 +21,7 @@ const TTL_MS = Number(process.env.EVENTS_TTL_MS) || 2 * 60 * 1000;
 const eventsCache = createCache({ ttlMs: TTL_MS, maxEntries: 1 });
 
 /** Minimal RFC-4180 CSV parser (quoted fields, escaped quotes, embedded newlines). */
-export function parseCsv(text) {
+function parseCsv(text) {
   const rows = [];
   let row = [];
   let field = '';
@@ -50,7 +53,7 @@ export function parseCsv(text) {
   return rows;
 }
 
-/** CSV text → events: { uid, summary, date, start, end, allDay } with local "HH:MM" times. */
+/** CSV text → events: { uid, summary, date, start, end, allDay } */
 export function parseEventsCsv(text) {
   const rows = parseCsv(text);
   if (rows.length < 2) return [];
@@ -61,8 +64,7 @@ export function parseEventsCsv(text) {
     .map((r) => {
       const startDT = col(r, 'start.dateTime');
       const endDT = col(r, 'end.dateTime');
-      // dateTime strings carry the school's local offset ("2026-10-05T10:00:00+02:00"),
-      // so date and wall-clock time are read straight from the string.
+      // dateTime strings carry local offset ("2026-10-05T10:00:00+02:00"),
       const allDay = !startDT;
       return {
         uid: col(r, 'uid'),
@@ -82,9 +84,9 @@ const API = 'https://www.googleapis.com/calendar/v3/calendars';
 const TZ = 'Europe/Rome';
 const FIELDS = 'nextPageToken,items(id,status,summary,start,end,updated)';
 const FULL_EVERY_MS = 60 * 60 * 1000;
+const MAX_PAGES = 20;
 // Window: from Monday of last week, so the current and previous weeks are complete.
-export const CALENDAR_PAST_DAYS = 13;
-export const CALENDAR_AHEAD_DAYS = Number(process.env.CALENDAR_AHEAD_DAYS) || 42;
+const CALENDAR_PAST_DAYS = 13;
 
 export const calendarEnabled = () => Boolean(process.env.GOOGLE_CALENDAR_API_KEY && process.env.GOOGLE_CALENDAR_ID);
 
@@ -95,9 +97,8 @@ export const addDays = (s, n) => {
 };
 
 /**
- * One API event → events in our shape: { uid, summary, date, start, end, allDay }.
- * An all-day event over several days (a trip) becomes one event per day; its end date is
- * exclusive. Timed events carry the calendar's local offset, read straight from the string.
+ * One API event { uid, summary, date, start, end, allDay }.
+ * All-day event over several days = one event per day
  */
 export function toEvents(item) {
   const summary = String(item.summary || '').trim();
@@ -122,7 +123,7 @@ async function listEvents(params) {
   const id = encodeURIComponent(process.env.GOOGLE_CALENDAR_ID);
   const items = [];
   let pageToken = '';
-  for (let page = 0; page < 20; page++) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const q = new URLSearchParams({
       key: process.env.GOOGLE_CALENDAR_API_KEY,
       singleEvents: 'true',
@@ -142,34 +143,36 @@ async function listEvents(params) {
     if (!data.nextPageToken) return items;
     pageToken = data.nextPageToken;
   }
+  log.warn('Calendar read cut at the page limit', { events: items.length });
   return items;
 }
 
-/** Every event between two days (YYYY-MM-DD, included), read in full: for occasional reads. */
-export async function calendarEventsBetween(from, to) {
-  const items = await listEvents({ timeMin: `${from}T00:00:00Z`, timeMax: `${addDays(to, 1)}T00:00:00Z` });
+// From `from` (YYYY-MM-DD) on, with no end.
+const since = (from) => ({ timeMin: `${from}T00:00:00Z` });
+
+/** Every event from `from` on, read in full: for occasional reads. */
+export async function calendarEventsSince(from) {
+  const items = await listEvents(since(from));
   return items.flatMap(toEvents);
 }
 
 // API items of the current window, by id.
-let state = { from: null, to: null, items: new Map(), fullAt: 0, syncedAt: 0 };
+let state = { from: null, items: new Map(), fullAt: 0, syncedAt: 0 };
 
 /**
- * Events of the window around `today`, kept up to date incrementally.
- * @returns {Promise<{ events: object[], from: string, to: string }>}
+ * Events from CALENDAR_PAST_DAYS before `today` on (no end), kept up to date incrementally.
+ * @returns {Promise<{ events: object[], from: string }>}
  */
-export async function getCalendarEvents(today) {
+async function getCalendarEvents(today) {
   const from = addDays(today, -CALENDAR_PAST_DAYS);
-  const to = addDays(today, CALENDAR_AHEAD_DAYS);
-  const window = { timeMin: `${from}T00:00:00Z`, timeMax: `${addDays(to, 1)}T00:00:00Z` };
+  const window = since(from);
   const now = Date.now();
 
-  if (state.from !== from || now - state.fullAt > FULL_EVERY_MS) {
+  if (state.from !== from || now - state.fullAt > FULL_EVERY_MS) { // read all events
     const items = await listEvents(window);
-    state = { from, to, items: new Map(items.map((i) => [i.id, i])), fullAt: now, syncedAt: now };
-    log.debug('Calendar read', { from, to, events: items.length });
-  } else {
-    // A minute of overlap: an edit saved while the previous read ran is not missed.
+    state = { from, items: new Map(items.map((i) => [i.id, i])), fullAt: now, syncedAt: now };
+    log.debug('Calendar read', { from, events: items.length });
+  } else { // read only the changes since the last read
     const updatedMin = new Date(state.syncedAt - 60 * 1000).toISOString();
     const changed = await listEvents({ ...window, updatedMin, showDeleted: 'true' });
     for (const i of changed) {
@@ -180,11 +183,10 @@ export async function getCalendarEvents(today) {
     if (changed.length) log.debug('Calendar changes', { events: changed.length });
   }
 
-  const events = [...state.items.values()].flatMap(toEvents).filter((e) => e.date >= from && e.date <= to);
-  return { events, from, to };
+  const events = [...state.items.values()].flatMap(toEvents).filter((e) => e.date >= from);
+  return { events, from };
 }
 
-/** Today's date at the school, "YYYY-MM-DD". */
 export function schoolToday(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(now);
 }
@@ -196,18 +198,17 @@ async function loadCsv() {
 }
 
 /**
- * All variations currently published, cached briefly. Each event gets its parsed fields merged in.
- * Source: the Calendar API when configured (below), else the Sheet CSV; the CSV is
- * also the fallback when the API fails. `window` is the date range the source covers
- * ({from, to}), or null for the CSV (its range is set by the Apps Script).
+ * All variations cached briefly.
+ * `window` is the date range the source covers
+ * ({from, to}, to null = no end), or null for the CSV
  */
 export async function getVariations() {
   const { value, stale } = await eventsCache.get('events', async () => {
     let loaded;
     if (calendarEnabled()) {
       try {
-        const { events, from, to } = await getCalendarEvents(schoolToday());
-        loaded = { events, window: { from, to }, source: 'calendar' };
+        const { events, from } = await getCalendarEvents(schoolToday());
+        loaded = { events, window: { from, to: null }, source: 'calendar' };
       } catch (err) {
         log.warn('Calendar API failed, using the CSV', { error: err.message });
       }

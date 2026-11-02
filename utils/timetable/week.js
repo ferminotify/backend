@@ -14,10 +14,14 @@ const ALIGN_MIN = 15;
 // Lessons last 55 minutes (08:05–09:00, 09:00–09:55, break, 10:05–11:00, …, 13:00–13:55, lunch,
 // 14:15–15:10, 15:10–16:05); evening ones 50 (18:15–19:05, 19:05–19:55, break, 20:10–21:00, …).
 // The school site gives only the start times.
-const lessonMinutes = (start) => (start >= 18 * 60 ? 50 : 55);
+// Evening classes: lessons from here on (first one 18:15).
+const EVENING_FROM = '17:45';
+const lessonMinutes = (start) => (start >= toMinutes(EVENING_FROM) ? 50 : 55);
 const lessonEnd = (mins, i) => mins[i] + lessonMinutes(mins[i]);
 const overlap = (a, b, mins, i) => Math.min(b, lessonEnd(mins, i)) - Math.max(a, mins[i]);
-const ranged = (v) => !v.allDay && v.start && v.end && v.start !== v.end && v.kind !== 'entry' && v.kind !== 'exit' && v.end > v.start;
+const ranged = (v) => !v.allDay && v.start && v.end && v.end > v.start && v.kind !== 'entry' && v.kind !== 'exit';
+// Indexes of `slots` with a lesson of the entity that day, in order.
+const taughtIdx = (slots, lessonSlots) => slots.map((s, i) => (lessonSlots.has(s) ? i : -1)).filter((i) => i !== -1);
 
 /** Slots starting inside the event, with the round-hour snap (09:00–13:00 → 09:00 … 12:05). */
 function startingSlots(v, slots, mins) {
@@ -79,7 +83,7 @@ export function offLessons(v, slots, lessonSlots) {
   if (slots.some((s, i) => lessonSlots.has(s) && overlap(a, b, mins, i) > SNAP_MIN)) return false;
   // Only before the first or after the last lesson of the day: a free hour in between keeps
   // the lesson grid (no odd row between two lessons).
-  const taught = slots.map((s, i) => (lessonSlots.has(s) ? i : -1)).filter((i) => i !== -1);
+  const taught = taughtIdx(slots, lessonSlots);
   return !(taught.length && b > mins[taught[0]] + SNAP_MIN && a < lessonEnd(mins, taught[taught.length - 1]) - SNAP_MIN);
 }
 
@@ -107,7 +111,10 @@ const detailClasses = (detail) => String(detail || '').split(', ').map(entityKey
 
 // Day or evening lesson hours, by the event's start (when the entity's own are not at hand).
 const EVENING_SLOTS = ['18:15', '19:05', '20:10', '21:00', '21:50'];
-const slotsOf = (v) => (v.start && v.start >= '17:45' ? EVENING_SLOTS : SCHOOL_SLOTS);
+const slotsOf = (v) => (v.start && v.start >= EVENING_FROM ? EVENING_SLOTS : SCHOOL_SLOTS);
+
+// Who an event puts in a slot: its classes, else the first part of its title.
+const occupantOf = (v) => (v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0]);
 
 const publicVariation = (v, slots = slotsOf(v)) => ({
   uid: v.uid,
@@ -150,7 +157,7 @@ export function lessonRole(cell, dayLessons, allSlots) {
     // "ANTICIPA 6' ORA": that hour's lesson; else the teacher's next lesson that day.
     // The hour is counted on the class's own day: evening classes start again from 18:15.
     const hour = Number((`${early.activity || ''} ${early.summary}`.match(/\b(\d)\s*['’^°ªA]?\s*ORA/i) || [])[1]);
-    const hours = cell.start >= '17:45' ? allSlots.filter((t) => t >= '17:45') : allSlots.filter((t) => t < '17:45');
+    const hours = cell.start >= EVENING_FROM ? allSlots.filter((t) => t >= EVENING_FROM) : allSlots.filter((t) => t < EVENING_FROM);
     const at = hour ? hours[hour - 1] : null;
     const lesson =
       (at && dayLessons.find((l) => l.slots.includes(at) && teaches(l))) ||
@@ -210,7 +217,7 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
     const lessonSlots = new Set(units.keys());
     // The class's school hours that day: first to last lesson. An entry or exit empties them;
     // what comes before or after (help desks, courses, meetings) stays.
-    const lessonIdx = allSlots.map((s, i) => (lessonSlots.has(s) ? i : -1)).filter((i) => i !== -1);
+    const lessonIdx = taughtIdx(allSlots, lessonSlots);
     const inSchoolHours = (slot) => {
       const i = allSlots.indexOf(slot);
       return lessonIdx.length > 0 && i >= lessonIdx[0] && i <= lessonIdx[lessonIdx.length - 1];
@@ -322,11 +329,11 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
             // The teacher is away: their lessons are not held (by them).
             if (base) touch(slot, v, 'cancelled');
           } else if (named && over) {
-            overlay({ occupant: v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0] });
+            overlay({ occupant: occupantOf(v) });
             break;
           } else if (named) {
             // Substitution, room change or trip duty: the teacher is busy with the event's class.
-            const occupant = v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0];
+            const occupant = occupantOf(v);
             touch(slot, v, 'changed', base && sameClass ? at : { ...at, occupant });
           } else if (sameClass && v.kind === 'trip' && !forStayers(v) && staysAtSchool(entityKey(base.className))) {
             // The class's trip, but some students stay: the lesson is held for them.
@@ -350,7 +357,7 @@ export function buildWeek({ entity, table, variations, days, knownClasses = new 
           continue;
         }
         // Someone is (also) here now: the class(es) or activity named by the event.
-        const occupant = v.classes.length ? v.classes.join(', ') : v.summary.split(' - ')[0];
+        const occupant = occupantOf(v);
         if (over) {
           overlay({ occupant });
           continue;

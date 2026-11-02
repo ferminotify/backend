@@ -16,9 +16,8 @@ import { forgetTicket, optionalSchoolTicket } from '../utils/schoolTicket.js';
 const router = express.Router();
 const log = logger.child('timetable');
 
-// Teachers only for accounts logged in with Moodle that the school lets see them (ticket from
-// routes/moodle.js, routes/auth.js), fetched with that session. Everyone else: the surnames
-// the public calendar prints, for keyword suggestions only (utils/timetable/match.js).
+// Teachers only for accounts logged in with Moodle with access
+// Everyone else from calendar prints, for keyword suggestions only
 const canSeeTeachers = (req) => Boolean(req.schoolSession);
 
 // Public, read-only. Short browser cache: variations change during the day.
@@ -91,8 +90,8 @@ function isNotifier(req) {
  *   → { events: [{uid, summary, date, start, end, allDay}],
  *       matches: { keyword: [uid] }, optional: { keyword: { category: [uid] } }, source, stale }
  * No keywords: every event of those days. With keywords: the events any of them finds,
- * opt-in activities included (`optional`: help desks… reaching the keyword's class only through
- * its year/group, utils/timetable/match.js; the notifier sends them only to who chose them).
+ * opt-in activities included (`optional`: help desks… reaching a class keyword, through its
+ * year/group or naming the class, utils/timetable/match.js; the notifier sends them only to who chose them).
  * Public: only the public calendar's titles and uids, never the school's teacher list.
  */
 router.post('/search', async (req, res) => {
@@ -111,8 +110,7 @@ router.post('/search', async (req, res) => {
   const kws = [...new Set(keywords.filter((k) => typeof k === 'string' && k.trim()).map((k) => k.slice(0, 100)))];
   try {
     const started = Date.now();
-    const { events: upcoming, source, stale } = await upcomingEvents(); // here
-    const inRange = upcoming.filter((e) => (!from || e.date >= from) && (!to || e.date <= to));
+    const { events: inRange, source, stale } = await upcomingEvents({ from, to });
     if (!kws.length) return res.json({ events: inRange, matches: {}, optional: {}, source, stale });
     const { matches, optional } = await matchKeywords(inRange, kws);
     const found = new Set([
