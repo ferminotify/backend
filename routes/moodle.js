@@ -6,6 +6,9 @@
 // POST /complete    signup token + name, surname, gender, email → account created; can log in 
 //                   once the email is confirmed.
 //                   An email that already has an account gets a "Collega Moodle" link instead.
+//                   Unconfirmed yet (maybe a mistyped email): logging in with Moodle shows this
+//                   step again, filled in; completing it updates that account (new address, new
+//                   confirmation link: the old one stops working).
 // POST /link        the link's token (from that email) → Moodle linked to the account, logged in.
 //
 // The account can also log in with its email and the Moodle password: /login checks it on
@@ -19,7 +22,6 @@ import { generateRefreshToken } from '../utils/auth.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendConfirmationEmail, sendMoodleLinkEmail } from '../utils/email.js';
 import { FRONTEND_BASE } from '../utils/google.js';
-import { refuseUnconfirmed } from '../utils/confirmReminder.js';
 import { teacherTicket } from '../utils/schoolTicket.js';
 import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
 
@@ -34,6 +36,13 @@ const linkEmailSent = new Map(); // user id -> time
 const SIGNUP_TTL = '30m';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+
+/** "mario.rossi@gmail.com" → "m•••@gmail.com": shown to whoever logs in with that Moodle. */
+export function maskEmail(email) {
+  const [user, domain] = String(email || '').split('@');
+  if (!domain) return '';
+  return `${user.slice(0, 1)}•••@${domain}`;
+}
 
 async function startSession(res, user) {
   const refreshToken = await generateRefreshToken(user.id, YEAR_MS);
@@ -74,9 +83,19 @@ router.post('/', async (req, res) => {
   const schoolUsername = username; // as typed: the school site checks it case-sensitively
 
   try {
-    const { rows } = await pool.query('SELECT id, email, onboarding, notifications FROM subscribers WHERE lower(school_username) = lower($1)', [schoolUsername]);
+    const { rows } = await pool.query(
+      'SELECT id, email, name, surname, gender, onboarding, notifications FROM subscribers WHERE lower(school_username) = lower($1)',
+      [schoolUsername]
+    );
+    if (rows[0] && rows[0].notifications < 0) {
+      // Signed up, email not confirmed: the signup step again, to fix the address if wrong.
+      // The Moodle password proves it is them; the address is shown masked.
+      const u = rows[0];
+      const signup = jwt.sign({ purpose: SIGNUP_PURPOSE, schoolUsername, pendingId: u.id }, process.env.JWT_SECRET, { expiresIn: SIGNUP_TTL });
+      log.info('Moodle signup resumed (email not confirmed)', { id: u.id, ip: clientIp(req) });
+      return res.json({ signup, pending: { name: u.name, surname: u.surname, gender: u.gender, email: maskEmail(u.email) } });
+    }
     if (rows[0]) {
-      if (rows[0].notifications < 0) return refuseUnconfirmed(res, rows[0].id);
       const token = await startSession(res, rows[0]);
       await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [rows[0].id]);
       log.info('Moodle login success', { id: rows[0].id, ip: clientIp(req) });
@@ -115,10 +134,19 @@ router.post('/complete', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const taken = await client.query('SELECT id, notifications, school_username FROM subscribers WHERE lower(email) = lower($1) OR lower(school_username) = lower($2)', [
-      email,
-      claims.schoolUsername,
-    ]);
+    // Resumed signup (POST /): this unconfirmed account, still unconfirmed and still theirs.
+    let pending = null;
+    if (claims.pendingId) {
+      const p = await client.query(
+        'SELECT id FROM subscribers WHERE id = $1 AND lower(school_username) = lower($2) AND notifications < 0 FOR UPDATE',
+        [claims.pendingId, claims.schoolUsername]
+      );
+      pending = p.rows[0] || null;
+    }
+    const taken = await client.query(
+      'SELECT id, notifications, school_username FROM subscribers WHERE (lower(email) = lower($1) OR lower(school_username) = lower($2)) AND id <> $3',
+      [email, claims.schoolUsername, pending?.id ?? -1]
+    );
     if (taken.rows.some((r) => r.school_username?.toLowerCase() === claims.schoolUsername.toLowerCase())) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Questo account Moodle è già registrato: accedi di nuovo con Moodle', code: 'moodle_taken' });
@@ -151,6 +179,25 @@ router.post('/complete', async (req, res) => {
     }
     // notifications = -1: unconfirmed until the link in the email is opened (as /register).
     const code = await getTelegramTemporaryCode();
+    if (pending) {
+      // New address and code: the link sent to the old address stops working.
+      const upd = await client.query(
+        `UPDATE subscribers SET name = $1, surname = $2, email = $3, gender = $4, telegram = $5
+          WHERE id = $6 RETURNING id, email, unsub_token`,
+        [name, surname, email, gender, code, pending.id]
+      );
+      const user = upd.rows[0];
+      await sendConfirmationEmail(email, {
+        name,
+        gender,
+        code,
+        unsubInfo: { id: user.id, unsub_token: user.unsub_token },
+        schoolUsername: claims.schoolUsername,
+      });
+      await client.query('COMMIT');
+      log.info('Moodle signup updated (email not confirmed)', { id: user.id, ip: clientIp(req) });
+      return res.status(201).json({ confirmSent: true });
+    }
     const ins = await client.query(
       `INSERT INTO subscribers
          (name, surname, email, school_username, gender, notifications, notification_preferences, profile_complete, telegram, onboarding)
@@ -192,11 +239,20 @@ router.post('/link', async (req, res) => {
     return res.status(401).json({ error: 'Link scaduto o non valido: accedi di nuovo con Moodle', code: 'moodle_link_invalid' });
   }
   try {
-    const other = await pool.query('SELECT id FROM subscribers WHERE lower(school_username) = lower($1) AND id <> $2', [
+    const other = await pool.query('SELECT id, notifications FROM subscribers WHERE lower(school_username) = lower($1) AND id <> $2', [
       claims.schoolUsername,
       claims.userId,
     ]);
-    if (other.rowCount) return res.status(409).json({ error: 'Questo account Moodle è già collegato a un altro account' });
+    if (other.rows.some((r) => r.notifications >= 0)) {
+      return res.status(409).json({ error: 'Questo account Moodle è già collegato a un altro account' });
+    }
+    // An unconfirmed signup with this Moodle (an address that was not theirs): replaced by this one.
+    if (other.rowCount) {
+      await pool.query('DELETE FROM subscribers WHERE lower(school_username) = lower($1) AND id <> $2 AND notifications < 0', [
+        claims.schoolUsername,
+        claims.userId,
+      ]);
+    }
     // Only an account without Moodle yet; the same link twice is fine.
     // Opening the link proves the address: an unconfirmed account is confirmed too.
     const upd = await pool.query(
