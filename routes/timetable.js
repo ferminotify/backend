@@ -6,7 +6,6 @@ import {
   ALL_TYPES,
   getIndex,
   getWeek,
-  sessionSeesTeachers,
   upcomingEvents,
   SchoolSessionExpired,
 } from '../utils/timetable/index.js';
@@ -27,8 +26,10 @@ const setCache = (req, res, seconds) => {
   res.set('Cache-Control', canSeeTeachers(req) ? 'private, no-store' : `public, max-age=${seconds}`);
 };
 
-const sessionExpired = (res) =>
-  res.status(401).json({ error: 'Sessione Moodle scaduta, accedi di nuovo', code: 'school_session_expired' });
+const sessionExpired = (req, res) => {
+  forgetTicket(req.headers['x-school-ticket']);
+  return res.status(401).json({ error: 'Sessione Moodle scaduta, accedi di nuovo', code: 'school_session_expired' });
+};
 
 /**
  * Runs `fn`; when it fails because of a school session that is not this request's
@@ -44,34 +45,6 @@ async function withOwnSession(req, fn) {
 }
 
 // --- Timetable -------------------------------------------------------------------------
-
-// Most data comes from the shared cache, so a user's session would rarely be used and a
-// ticket would keep working after its session ended (logout, password change). Check it
-// on the school site at most every 30 minutes.
-const SESSION_CHECK_MS = 30 * 60 * 1000;
-const checkedSessions = new Map(); // sessionid -> last successful check
-
-async function liveSchoolSession(req, res, next) {
-  const session = req.schoolSession;
-  if (!session) return next();
-  const at = checkedSessions.get(session.sessionid);
-  if (at && Date.now() - at < SESSION_CHECK_MS) return next();
-  try {
-    if (!(await sessionSeesTeachers(session))) throw new SchoolSessionExpired('No teacher access');
-  } catch (err) {
-    if (err instanceof SchoolSessionExpired) {
-      checkedSessions.delete(session.sessionid);
-      forgetTicket(req.headers['x-school-ticket']);
-      return sessionExpired(res);
-    }
-    log.warn('School session check failed', { error: err.message });
-    return next(); // school site down: keep serving (cached) data
-  }
-  checkedSessions.delete(session.sessionid);
-  checkedSessions.set(session.sessionid, Date.now());
-  if (checkedSessions.size > 5000) checkedSessions.delete(checkedSessions.keys().next().value);
-  next();
-}
 
 const SEARCH_MAX_KEYWORDS = 20000; // notifier req up to 20k keywords
 const PUBLIC_MAX_KEYWORDS = 20; // public users req at most 20 keywords
@@ -126,7 +99,7 @@ router.post('/search', async (req, res) => {
   }
 });
 
-router.use(optionalSchoolTicket, liveSchoolSession);
+router.use(optionalSchoolTicket);
 
 /** Classes and rooms on the school timetable; also teachers for those allowed. */
 router.get('/', async (req, res) => {
@@ -152,7 +125,7 @@ router.get('/', async (req, res) => {
       schoolSession: Boolean(session),
     });
   } catch (err) {
-    if (err instanceof SchoolSessionExpired) return sessionExpired(res);
+    if (err instanceof SchoolSessionExpired) return sessionExpired(req, res);
     log.error('Index failed', { error: err.message });
     res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
   }
@@ -173,7 +146,7 @@ router.get('/:type/:ref', async (req, res) => {
     setCache(req, res, 60);
     res.json(week);
   } catch (err) {
-    if (err instanceof SchoolSessionExpired) return sessionExpired(res);
+    if (err instanceof SchoolSessionExpired) return sessionExpired(req, res);
     log.error('Week failed', { type, ref: req.params.ref, error: err.message });
     res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
   }

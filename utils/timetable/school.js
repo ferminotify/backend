@@ -10,15 +10,9 @@ const log = logger.child('timetable:school');
 const BASE_URL = process.env.TIMETABLE_URL || 'https://www.fermimn.edu.it/orario/';
 const TTL_MS = Number(process.env.TIMETABLE_TTL_MS) || 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Class/room/teacher lists change rarely: a month. A day while the teachers still include
-// placeholders (start of the year), so the real names show up soon.
+// Classes/rooms: a month. Teachers (logged-in index): a day, so new ones show up soon.
 const INDEX_TTL_MS = Number(process.env.TIMETABLE_INDEX_TTL_MS) || 30 * DAY_MS;
-const indexTtl = (index) => (index?.teacher?.some((t) => isPlaceholderTeacher(t.name)) ? DAY_MS : INDEX_TTL_MS);
-
-/** A chair not assigned yet: "A40 CATT 1", "A40 COE 3D" (subject code first, never a name). */
-export function isPlaceholderTeacher(name) {
-  return /^[A-Z]{1,2}\d{2,3}\b/i.test(String(name).trim());
-}
+const indexTtl = (index) => (index?.teacher?.length ? DAY_MS : INDEX_TTL_MS);
 
 // Public types; 'teacher' exists only on the logged-in site.
 const ENTITY_TYPES = ['class', 'room'];

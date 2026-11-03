@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { brEntries, isPlaceholderTeacher, parseIndex, parseTable } from '../utils/timetable/school.js';
+import { brEntries, parseIndex, parseTable } from '../utils/timetable/school.js';
 import { parseEventsCsv } from '../utils/timetable/calendar.js';
 import { parseSummary } from '../utils/timetable/parse.js';
 import { mentionsClassText, mentionsTeacherTypo, nearClassText, teacherContext, mentionsRoomText, mentionsTeacher, mentionsTeacherText, namesTeacherBare, jointClasses, jointsOf } from '../utils/timetable/match.js';
@@ -858,9 +858,4 @@ test('buildWeek (teacher): own class given to another teacher → absent', () =>
   // Only the room changes (no teacher named): still their lesson.
   const room = buildWeek({ entity: teacher, table, variations: [ev('m', 'CLASSE 5BIIN - AULA 40', '08:00', '09:00')], days: monday });
   assert.equal(room.days[0].cells[0].status, 'changed');
-});
-
-test('isPlaceholderTeacher: unassigned chairs, not people', () => {
-  for (const n of ['A40 Catt 1', 'A40 Coe 3d', 'A42 CATT 1', 'B016 CATT 2']) assert.equal(isPlaceholderTeacher(n), true, n);
-  for (const n of ['Ciccio Sara', 'Archimede Isabella', 'Del Paperis, Pico Ludovico']) assert.equal(isPlaceholderTeacher(n), false, n);
 });
