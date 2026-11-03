@@ -26,7 +26,7 @@ ALTER TABLE public.subscribers ADD COLUMN IF NOT EXISTS school_username varchar(
 -- 2026-10-17-notify-optin.sql: opt-in categories (backend utils/timetable/match.js, OPT_IN)
 ALTER TABLE public.subscribers ADD COLUMN IF NOT EXISTS notify_optin text[] NOT NULL DEFAULT '{}';
 
--- Opt-in categories on by default, for new accounts and for existing ones. Keep the list in
+-- Opt-in categories on by default ('gruppo' excluded: off), for new and existing accounts. Keep the list in
 -- sync with OPT_IN. The existing accounts are switched on only the first time (while the
 -- column default is still empty): a re-run must not turn back on what a user turned off.
 DO $$

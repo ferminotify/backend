@@ -225,7 +225,8 @@ export function nearClassText(summary, classKey, known = new Set()) {
 //
 // An opt-in activity (below: help desks, tutoring…) that reaches a class keyword, through its
 // year or group ("CLASSI 2^ IT") or naming the class itself, is returned apart, under its
-// category: the notifier sends it only to users who chose that category.
+// category: the notifier sends it only to users who chose that category. Through the year or
+// group only, under "<category>+gruppo": sent only to users who chose both.
 
 /** A keyword's words: "5ºCIIN" → ["5CIIN"], "d'Pluto" → ["D", "PLUTO"], "Pippò" → ["PIPPO"]. */
 export function keywordWords(kw) {
@@ -302,7 +303,7 @@ const classKeysOf = (pub) => new Set(pub.class.map((c) => c.key));
 
 /**
  * For each keyword, the uids of the events that concern it: `matches` always notified,
- * `optional` by opt-in category (OPT_IN) for users who chose it.
+ * `optional` by opt-in category (OPT_IN) for users who chose it ("a+b": all of them).
  * @param {{uid:string, summary:string}[]} events
  * @param {string[]} keywords
  * @returns {Promise<{ matches: Record<string, string[]>, optional: Record<string, Record<string, string[]>> }>}
@@ -333,9 +334,12 @@ export async function matchKeywords(events, keywords) {
       const how = eventMatch(v, k);
       if (!how) continue;
       // Opt-in activity for a class keyword: only by opt-in, even when the title names the class.
+      // Through year/group only: 'gruppo' too ("sportelli+gruppo" = both needed).
       const byOptIn = v.optIn && v.optIn !== 'few' && (how === 'level' || k.classKeys.length > 0);
-      if (byOptIn) ((optional[kw] ||= {})[v.optIn] ||= []).push(v.uid);
-      else if (how === 'direct' || !v.optIn) matches[kw].push(v.uid);
+      const viaGroup = how === 'level';
+      const cat = byOptIn ? (viaGroup ? `${v.optIn}+gruppo` : v.optIn) : viaGroup && !v.optIn ? 'gruppo' : null;
+      if (cat) ((optional[kw] ||= {})[cat] ||= []).push(v.uid);
+      else if (how === 'direct') matches[kw].push(v.uid);
     }
   }
   return { matches, optional };
@@ -348,23 +352,28 @@ export async function matchKeywords(events, keywords) {
 export const OPT_IN = {
   sportelli: {
     label: 'Sportelli',
-    example: 'CLASSI 2^ IT - AULA 10 - SPORTELLO FISICA',
+    example: 'SPORTELLO MATEMATICA - CLASSE 5CIIN',
     words: [/^SPORTELL/],
   },
   tutoring: {
     label: 'Peer tutoring',
-    example: 'PEER TUTORING FISICA - TUTOR (3A) - CLASSI PRIME',
+    example: 'PEER TUTORING FISICA - CLASSE 1A',
     words: [/^TUTOR/],
   },
   olimpiadi: {
-    label: 'Olimpiadi e gare',
-    example: 'OLIMPIADI DI INFORMATICA - CLASSI TRIENNIO',
+    label: 'Olimpiadi',
+    example: 'OLIMPIADI DI INFORMATICA - CLASSE 4CIIN',
     words: [/^OLIMPIAD/],
   },
   rappresentanti: {
     label: 'Rappresentanti',
-    example: 'INCONTRO DS CON RAPPRESENTANTI CLASSI 1^',
+    example: 'INCONTRO DS CON RAPPRESENTANTI CLASSE 2B',
     words: [/^RAPPRESENTANT/],
+  },
+  gruppo: {
+    label: 'Gruppi di classi',
+    example: 'CLASSI 3^ - ASSEMBLEA IN AULA MAGNA',
+    words: [],
   },
 };
 

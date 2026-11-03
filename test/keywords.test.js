@@ -69,6 +69,9 @@ test('opt-in categories: help desks and the like for a whole year are set apart'
   assert.equal(how('1AIIN', 'CLASSE 1AIIN - SPORTELLO FISICA'), 'direct');
   assert.equal(how('1AIIN', 'CLASSI PRIME - ASSEMBLEA IN AULA MAGNA'), 'level');
   assert.deepEqual(cleanOptIn(['sportelli', 'x', 'sportelli', 'few']), ['sportelli']);
+  // 'gruppo' is chosen by matchKeywords, never from title words
+  assert.deepEqual(cleanOptIn(['gruppo']), ['gruppo']);
+  assert.equal(optInCategory('CLASSI 3^ - GRUPPO TEATRO'), null);
 });
 
 test('keywords: a joint class as the calendar writes it is the site\'s class', () => {

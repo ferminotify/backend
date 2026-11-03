@@ -91,7 +91,8 @@ function isNotifier(req) {
  *       matches: { keyword: [uid] }, optional: { keyword: { category: [uid] } }, source, stale }
  * No keywords: every event of those days. With keywords: the events any of them finds,
  * opt-in activities included (`optional`: help desks… reaching a class keyword, through its
- * year/group or naming the class, utils/timetable/match.js; the notifier sends them only to who chose them).
+ * year/group or naming the class, utils/timetable/match.js; the notifier sends them only to who chose them,
+ * "sportelli+gruppo" to who chose both).
  * Public: only the public calendar's titles and uids, never the school's teacher list.
  */
 router.post('/search', async (req, res) => {
