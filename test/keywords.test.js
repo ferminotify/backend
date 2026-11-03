@@ -41,6 +41,31 @@ test('keywords: surnames, rooms and plain words', () => {
   assert.ok(!hit('AULA 9', 'CLASSE 5CIIN - AULA 94'));
 });
 
+test('keywords: a word after a lone digit is still found ("4 LICEO" is not only 4LICEO)', () => {
+  assert.ok(hit('4', 'CLASSI 4 e 5 - ORIENTAMENTO IN AULA MAGNA'));
+  assert.ok(hit('LICEO', 'RAPPRESENTANTI DI CLASSE 4 LICEO E 4 IT - AULA MAGNA'));
+  assert.ok(hit('4', 'CLASSI 4E - 4 F - AULA 94'));
+  assert.ok(!hit('4', 'CLASSE 5CIIN - AULA 94'));
+  assert.ok(!hit(' ', 'CLASSE 5CIIN - AULA 94'));
+});
+
+test('keywords: never fewer events than the old notifier (its rule as the floor)', () => {
+  const old = (kw, s) =>
+    Boolean(kw.trim()) &&
+    new RegExp(`\\b${kw.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(s.replace(/[^a-zA-Z0-9]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase());
+  const titles = [
+    'CLASSI 4 e 5 - ORIENTAMENTO',
+    'RAPPRESENTANTI DI CLASSE 4 LICEO E 4 IT - AULA MAGNA',
+    'CLASSE 3 CIIN - AULA 94 - PROF.SSA DEL MODELLO',
+    'CLASSE 5ºCIIN - USCITA ANTICIPATA ORE 12',
+    'SPORTELLO MATEMATICA - CLASSE 5CIIN - PROF. ROSSI',
+    'CLASSE 1AIIN - (PROF. PIPPÒ: ASSENTE) - AULA 94',
+    "CLASSE 2A - ATTIVITA' 2 ORE - AULA 1-3 DEBATE",
+  ];
+  const kws = ['4', '5', 'LICEO', 'IT', 'E', 'CIIN', '3 CIIN', '5CIIN', 'ORE', '2 ORE', 'ROSSI', 'MODELLO', 'AULA 94', '1AIIN', 'SPORTELLO', 'DEBATE', '1', '3'];
+  for (const s of titles) for (const kw of kws) if (old(kw, s)) assert.ok(hit(kw, s), `${kw} | ${s}`);
+});
+
 test('keywords: the whole name tells homonyms apart', () => {
   const homonyms = { ...lists, teacherNames: ['Clarabella Cristina', 'Clarabella Giulia'] };
   const hitH = (kw, summary) => eventMatches(ev(summary), classifyKeyword(kw, homonyms));

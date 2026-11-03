@@ -241,15 +241,22 @@ function titleHasWords(summary, words) {
   return w.some((_, i) => words.every((x, j) => w[i + j] === x));
 }
 
+/** The old notifier's rule (symbols as spaces, whole word): nothing it found is lost. */
+function legacyHas(summary, kw) {
+  if (!kw.trim()) return false;
+  const title = String(summary || '').replace(/[^a-zA-Z0-9]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  return new RegExp(`\\b${escapeRe(kw.toLowerCase())}\\b`).test(title);
+}
+
 /**
  * What a keyword stands for, given the school's lists.
  * `teachers` (teacherContext of teacherNames) may be passed when classifying many keywords.
- * @returns {{ classKeys: string[], rooms: object[], teachers: string[], words: string[], teacherCtx: object }}
+ * @returns {{ classKeys: string[], rooms: object[], teachers: string[], words: string[], raw: string, teacherCtx: object }}
  */
 export function classifyKeyword(kw, { classKeys, rooms, teacherNames, teachers = null }) {
   const words = keywordWords(kw);
   const joined = words.join('');
-  const out = { classKeys: [], rooms: [], teachers: [], words, teacherCtx: teachers || teacherContext(teacherNames) };
+  const out = { classKeys: [], rooms: [], teachers: [], words, raw: String(kw || ''), teacherCtx: teachers || teacherContext(teacherNames) };
   if (!words.length) return out;
   if (classKeys.has(joined)) out.classKeys = [joined];
   else {
@@ -275,7 +282,7 @@ export function classifyKeyword(kw, { classKeys, rooms, teacherNames, teachers =
  * @returns {false | 'direct' | 'level'} 'level': only through a whole year or group of classes
  */
 export function eventMatch(v, k) {
-  if (titleHasWords(v.summary, k.words)) return 'direct';
+  if (titleHasWords(v.summary, k.words) || legacyHas(v.summary, k.raw || '')) return 'direct';
   const named = { ...v, levels: [] };
   if (k.classKeys.some((c) => concernsClass(named, c))) return 'direct';
   if (k.rooms.some((r) => concernsRoom(v, r) || mentionsRoomText(v.summary, r.name))) return 'direct';
