@@ -19,10 +19,10 @@ import {
 } from '../utils/utils.js';
 import crypto from 'crypto';
 import { generateRefreshToken } from '../utils/auth.js';
-import { clientIp, schoolLoginLimited } from '../utils/limiter.js';
+import { clientIp, schoolLoginFailed, schoolLoginLimited, schoolLoginSucceeded } from '../utils/limiter.js';
 import { teacherTicket } from '../utils/schoolTicket.js';
 import { refuseUnconfirmed } from '../utils/confirmReminder.js';
-import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
+import { loginWith, logoutSession, SchoolLoginError } from '../utils/timetable/index.js';
 dotenv.config();
 
 const router = express.Router();
@@ -220,12 +220,14 @@ router.post('/login', async (req, res) => {
     let session = null;
     if (user.school_username && !(user.password && await bcrypt.compare(password, user.password))) {
         if (schoolLoginLimited(clientIp(req), user.school_username)) {
-            return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
+            return res.status(429).json({ error: 'Troppi tentativi, riprova più tardi' });
         }
         try {
             session = await loginWith(user.school_username, password);
+            schoolLoginSucceeded(user.school_username);
         } catch (err) {
             if (err instanceof SchoolLoginError) {
+                schoolLoginFailed(user.school_username);
                 log.warn('Login failed - invalid Moodle password', { id: user.id, ip: req.ip });
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
@@ -245,7 +247,10 @@ router.post('/login', async (req, res) => {
         }
     }
 
-    if ((user.notifications ?? 0) < 0) return refuseUnconfirmed(res, user.id);
+    if ((user.notifications ?? 0) < 0) {
+        if (session) logoutSession(session); // no ticket: the school session is not needed
+        return refuseUnconfirmed(res, user.id);
+    }
     const ticket = session && (await teacherTicket(session, user.id));
 
     // generate JWT token of 1 min
@@ -380,7 +385,7 @@ router.post('/request-change-password', async (req, res) => {
             await sendMailAsync(
                 email,
                 `Codice OTP [${randomCode}]`,
-                `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"border=0 cellpadding=0 cellspacing=0 width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src="${API_URL}/email/v3/logo-long-allmuted-trasp.png" style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"border=0 cellpadding=0 cellspacing=0><tr><td><h2 style="margin:10px 0">Il tuo codice di sicurezza</h2><tr><td style=text-align:left><p style=margin-bottom:0>Ciao ${safeName},<p style=line-height:1.3;margin-top:10px;margin-bottom:10px>il tuo <b>codice di sicurezza OTP</b> è:<table style="margin-left:auto;margin-right:auto;padding:5px 0;text-align:center;border-radius:10px"><tr><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[0]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[1]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[2]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[3]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[4]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[5]}</h1></table><tr><td style=font-size:13px;text-align:center><p style=margin-bottom:15px>Il codice scadrà tra <b>15 minuti</b>.<br>Ti inviamo questo codice perché hai richiesto di cambiare la password del tuo account. Se non hai richiesto di cambiare la password, puoi ignorare questa email.</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src="${API_URL}/email/v3/icon-allmuted.png" style=height:35px;margin-bottom:5px></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrato a Fermi Notify. Puoi disattivare le notifiche via mail <a href="${URL}/user/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}" style=color:#004a77>qui</a>.</table></main><html>`,
+                `<!doctype html><html><main style="font-family:Helvetica,Arial,Liberation Serif,sans-serif;background-color:#fff;color:#000"><table style="max-width:620px;border-collapse:collapse;margin:0 auto 0 auto;text-align:left;font-family:Helvetica,Arial,Liberation Serif,sans-serif"border=0 cellpadding=0 cellspacing=0 width=620px><tr style=background-color:#fff><td style="width:100%;padding:30px 7% 15px 7%"><a href=${URL}><img src="${API_URL}/email/v3/logo-long-allmuted-trasp.png" style=width:70%;height:auto;color:#fff alt="FERMI NOTIFY"></a><tr style=background-color:#fff><td><table style="width:100%;background-color:#fff;padding:30px 7% 30px 7%;border:none;border-top:1px solid #ddd;border-bottom:1px solid #ddd;font-size:16px"border=0 cellpadding=0 cellspacing=0><tr><td><h2 style="margin:10px 0">Il tuo codice di sicurezza</h2><tr><td style=text-align:left><p style=margin-bottom:0>Ciao ${safeName},<p style=line-height:1.3;margin-top:10px;margin-bottom:10px>il tuo <b>codice di sicurezza OTP</b> è:<table style="margin-left:auto;margin-right:auto;padding:5px 0;text-align:center;border-radius:10px"><tr><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[0]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[1]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[2]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[3]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[4]}</h1><td><h1 style=margin:0;text-align:center;width:30px;font-size:24px>${randomCode[5]}</h1></table><tr><td style=font-size:13px;text-align:center><p style=margin-bottom:15px>Il codice scadrà tra <b>15 minuti</b>.<br>Ti inviamo questo codice perché hai richiesto di cambiare la password del tuo account. Se non hai richiesto di cambiare la password, puoi ignorare questa email.</table><tr style=background-color:#fff><td style="padding:15px 7% 30px 7%;font-size:13px;position:relative;background-color:#fff"><p style=color:#8b959e>Per supporto o informazioni, consulta la <a href=${URL}/faq style=color:#004a77>FAQ</a> o contattaci su Instagram <a href=${URL}/ig style=color:#004a77><i>@ferminotify</i></a>.</p><a href=${URL}><img src="${API_URL}/email/v3/icon-allmuted.png" style=height:35px;margin-bottom:5px></a><p style=margin:0;color:#8b959e><i style=color:#8b959e>Fermi Notify Team</i><p style=margin-top:0><a href=${URL} style=color:#004a77 target=_blank>fn.lkev.in</a><p style=color:#8b959e;font-size:12px>Hai ricevuto questa email perché ti sei registrato a Fermi Notify. Puoi disattivare le notifiche via mail <a href="${URL}/auth/unsubscribe?id=${user.id}&token=${user.unsub_token}&email=${email}" style=color:#004a77>qui</a>.</table></main><html>`,
                 `Ciao ${name}, il tuo codice di sicurezza OTP per reimpostare la password è: ${randomCode}. Se non hai richiesto di cambiare la password, puoi ignorare questa email.`,
                 {
                     ...unsubscribeHeaders({ id: user.id, unsub_token: user.unsub_token })

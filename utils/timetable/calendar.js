@@ -6,7 +6,8 @@
 // EVENTS_TTL_MS only the events changed since the last read are fetched
 // (updatedMin + showDeleted), usually none.
 // Risk: with no end date, a recurring event without an end (singleEvents) expands into every
-// occurrence; reads stop at MAX_PAGES × 2500 events, logged as "Calendar read cut".
+// occurrence; reads stop at MAX_PAGES × 2500 events, logged as "Calendar read cut". Full reads
+// are by start time: a cut drops the farthest events.
 import logger from '../logger.js';
 import { createCache } from './cache.js';
 import { parseSummary } from './parse.js';
@@ -149,10 +150,11 @@ async function listEvents(params) {
 
 // From `from` (YYYY-MM-DD) on, with no end.
 const since = (from) => ({ timeMin: `${from}T00:00:00Z` });
+const fullRead = (from) => ({ ...since(from), orderBy: 'startTime' });
 
 /** Every event from `from` on, read in full: for occasional reads. */
 export async function calendarEventsSince(from) {
-  const items = await listEvents(since(from));
+  const items = await listEvents(fullRead(from));
   return items.flatMap(toEvents);
 }
 
@@ -165,16 +167,15 @@ let state = { from: null, items: new Map(), fullAt: 0, syncedAt: 0 };
  */
 async function getCalendarEvents(today) {
   const from = addDays(today, -CALENDAR_PAST_DAYS);
-  const window = since(from);
   const now = Date.now();
 
   if (state.from !== from || now - state.fullAt > FULL_EVERY_MS) { // read all events
-    const items = await listEvents(window);
+    const items = await listEvents(fullRead(from));
     state = { from, items: new Map(items.map((i) => [i.id, i])), fullAt: now, syncedAt: now };
     log.debug('Calendar read', { from, events: items.length });
   } else { // read only the changes since the last read
     const updatedMin = new Date(state.syncedAt - 60 * 1000).toISOString();
-    const changed = await listEvents({ ...window, updatedMin, showDeleted: 'true' });
+    const changed = await listEvents({ ...since(from), updatedMin, showDeleted: 'true' });
     for (const i of changed) {
       if (i.status === 'cancelled') state.items.delete(i.id);
       else state.items.set(i.id, i);

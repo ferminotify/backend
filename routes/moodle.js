@@ -17,13 +17,13 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import pool from '../db.js';
 import logger from '../utils/logger.js';
-import { clientIp, schoolLoginLimited } from '../utils/limiter.js';
+import { clientIp, schoolLoginFailed, schoolLoginLimited, schoolLoginSucceeded } from '../utils/limiter.js';
 import { generateRefreshToken } from '../utils/auth.js';
 import { getTelegramTemporaryCode } from '../utils/telegram.js';
 import { sendConfirmationEmail, sendMoodleLinkEmail } from '../utils/email.js';
 import { FRONTEND_BASE } from '../utils/google.js';
 import { teacherTicket } from '../utils/schoolTicket.js';
-import { loginWith, SchoolLoginError } from '../utils/timetable/index.js';
+import { loginWith, logoutSession, SchoolLoginError } from '../utils/timetable/index.js';
 
 const router = express.Router();
 const log = logger.child('moodle-auth');
@@ -66,7 +66,7 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Inserisci nome utente e password' });
   }
   if (schoolLoginLimited(clientIp(req), username)) {
-    return res.status(429).json({ error: 'Troppi tentativi, riprova tra qualche minuto' });
+    return res.status(429).json({ error: 'Troppi tentativi, riprova più tardi' });
   }
 
   let session;
@@ -74,12 +74,14 @@ router.post('/', async (req, res) => {
     session = await loginWith(username, password);
   } catch (err) {
     if (err instanceof SchoolLoginError) {
+      schoolLoginFailed(username);
       log.info('Moodle login rejected', { ip: clientIp(req) });
       return res.status(401).json({ error: 'Nome utente o password errati', code: 'school_login_failed' });
     }
     log.error('Moodle login error', { error: err.message });
     return res.status(502).json({ error: 'Moodle Fermi non raggiungibile, riprova più tardi' });
   }
+  schoolLoginSucceeded(username);
   const schoolUsername = username; // as typed: the school site checks it case-sensitively
 
   try {
@@ -92,6 +94,7 @@ router.post('/', async (req, res) => {
       // The Moodle password proves it is them; the address is shown masked.
       const u = rows[0];
       const signup = jwt.sign({ purpose: SIGNUP_PURPOSE, schoolUsername, pendingId: u.id }, process.env.JWT_SECRET, { expiresIn: SIGNUP_TTL });
+      logoutSession(session); // no ticket: the school session is not needed
       log.info('Moodle signup resumed (email not confirmed)', { id: u.id, ip: clientIp(req) });
       return res.json({ signup, pending: { name: u.name, surname: u.surname, gender: u.gender, email: maskEmail(u.email) } });
     }
@@ -103,11 +106,13 @@ router.post('/', async (req, res) => {
     }
   } catch (err) {
     log.error('Moodle login DB error', { error: err.stack || err });
+    logoutSession(session);
     return res.status(500).json({ error: 'Errore interno, riprova più tardi' });
   }
 
   // First time: the school site only proves the account exists, the rest is asked next.
   const signup = jwt.sign({ purpose: SIGNUP_PURPOSE, schoolUsername }, process.env.JWT_SECRET, { expiresIn: SIGNUP_TTL });
+  logoutSession(session);
   log.info('Moodle signup started', { ip: clientIp(req) });
   return res.json({ signup });
 });

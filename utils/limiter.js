@@ -39,16 +39,35 @@ const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
-// Moodle logins (each one is a request to IS Fermi): per IP and per username
+// Moodle logins (each one is a request to IS Fermi): per IP, per username, all together
 const schoolLoginByIp = createLimiter({ windowMs: 15 * MINUTE_MS, max: 10 });
 const schoolLoginByUser = createLimiter({ windowMs: 15 * MINUTE_MS, max: 5 });
+const schoolLoginAll = createLimiter({ windowMs: MINUTE_MS, max: 30 });
+// Wrong passwords per username in a day: nobody can get a school account locked through us
+const SCHOOL_FAILURES_MAX = 8;
+const schoolFailures = new Map(); // username -> { count, reset }
+const userKey = (username) => String(username).toLowerCase();
 
-/** True when this IP or this username tried too many times recently. Counts the attempt. */
+/** True when this IP, this username or everyone tried too many times recently. Counts the attempt. */
 export function schoolLoginLimited(ip, username) {
+  const failures = schoolFailures.get(userKey(username));
+  if (failures && failures.reset > Date.now() && failures.count >= SCHOOL_FAILURES_MAX) return true;
   const byIp = schoolLoginByIp(ip);
-  const byUser = schoolLoginByUser(String(username).toLowerCase());
-  return byIp || byUser;
+  const byUser = schoolLoginByUser(userKey(username));
+  return byIp || byUser || schoolLoginAll('all');
 }
+
+/** A wrong password for this username on the school site. */
+export function schoolLoginFailed(username) {
+  const now = Date.now();
+  const entry = schoolFailures.get(userKey(username));
+  if (entry && entry.reset > now) entry.count += 1;
+  else schoolFailures.set(userKey(username), { count: 1, reset: now + DAY_MS });
+  if (schoolFailures.size > 10000) for (const [k, v] of schoolFailures) if (v.reset < now) schoolFailures.delete(k);
+}
+
+/** A successful login clears the username's failures. */
+export const schoolLoginSucceeded = (username) => schoolFailures.delete(userKey(username));
 
 // Public event search, per IP (the notifier is not limited)
 export const searchLimited = createLimiter({ windowMs: MINUTE_MS, max: 30 });

@@ -6,7 +6,7 @@
 -- Includes, in order:
 --   2026-06-07-google-oauth.sql
 --   2026-10-13-moodle-login.sql
---   2026-10-17-notify-optin.sql   + opt-in categories on by default (below)
+--   2026-10-17-notify-optin.sql   + default opt-in categories (below)
 --   2026-10-28-school-ticket.sql
 --   2026-10-30-email-sends.sql
 --   2026-11-01-email-inactive.sql
@@ -26,7 +26,7 @@ ALTER TABLE public.subscribers ADD COLUMN IF NOT EXISTS school_username varchar(
 -- 2026-10-17-notify-optin.sql: opt-in categories (backend utils/timetable/match.js, OPT_IN)
 ALTER TABLE public.subscribers ADD COLUMN IF NOT EXISTS notify_optin text[] NOT NULL DEFAULT '{}';
 
--- Opt-in categories on by default ('gruppo' excluded: off), for new and existing accounts. Keep the list in
+-- On by default: gruppo, olimpiadi, rappresentanti (sportelli, tutoring: off), for new and existing accounts. Keep the list in
 -- sync with OPT_IN. The existing accounts are switched on only the first time (while the
 -- column default is still empty): a re-run must not turn back on what a user turned off.
 DO $$
@@ -35,12 +35,12 @@ BEGIN
         WHERE table_schema = 'public' AND table_name = 'subscribers' AND column_name = 'notify_optin')
        = '''{}''::text[]' THEN
         UPDATE public.subscribers
-           SET notify_optin = ARRAY['sportelli', 'tutoring', 'olimpiadi', 'rappresentanti']
+           SET notify_optin = ARRAY['gruppo', 'olimpiadi', 'rappresentanti']
          WHERE notify_optin = '{}';
     END IF;
 END $$;
 ALTER TABLE public.subscribers
-    ALTER COLUMN notify_optin SET DEFAULT ARRAY['sportelli', 'tutoring', 'olimpiadi', 'rappresentanti']::text[];
+    ALTER COLUMN notify_optin SET DEFAULT ARRAY['gruppo', 'olimpiadi', 'rappresentanti']::text[];
 
 -- 2026-10-28-school-ticket.sql: last Moodle session, sealed (utils/schoolTicket.js)
 ALTER TABLE public.subscribers ADD COLUMN IF NOT EXISTS school_ticket text;
