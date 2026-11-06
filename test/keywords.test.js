@@ -1,0 +1,127 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { classifyKeyword, cleanOptIn, eventMatch, jointCalendarName, keywordWords, optInCategory, schoolYearStart, surnamesFromTitles } from '../utils/timetable/match.js';
+import { parseSummary } from '../utils/timetable/parse.js';
+
+const eventMatches = (v, k) => Boolean(eventMatch(v, k));
+
+const lists = {
+  classKeys: new Set(['1AIIN', '1BIIN', '3MENE', '3ITEL', '3MENEITEL', '5CIIN']),
+  rooms: [{ key: 'AULA94', name: 'Aula 94' }],
+  teacherNames: ['Rossi Mario', 'Del Modello Anna', 'Pippò Luca'],
+};
+const ev = (summary) => ({ uid: summary, summary, ...parseSummary(summary) });
+const hit = (kw, summary) => eventMatches(ev(summary), classifyKeyword(kw, lists));
+
+test('keywordWords: symbols and accents of keywords are ignored', () => {
+  assert.deepEqual(keywordWords('5ºCIIN'), ['5CIIN']);
+  assert.deepEqual(keywordWords('3A.'), ['3A']);
+  assert.deepEqual(keywordWords('Pippò'), ['PIPPO']);
+  assert.deepEqual(keywordWords('Rossi-Bianchi'), ['ROSSI', 'BIANCHI']);
+});
+
+test('keywords: class codes (named, written oddly, whole years; joint classes only as their own keyword)', () => {
+  assert.ok(hit('5CIIN', 'CLASSE 5CIIN - AULA 94 - PROF. ROSSI'));
+  assert.ok(hit('5ºCIIN', 'CLASSE 5CIIN - AULA 94'));
+  assert.ok(hit('1AIIN', 'CLASSI PRIME - ASSEMBLEA IN AULA MAGNA'));
+  assert.ok(!hit('3MENE', 'CLASSE 3MENEITEL - AULA 94'));
+  assert.ok(hit('3MENEITEL', 'CLASSE 3MENEITEL - AULA 94'));
+  assert.equal(jointCalendarName(['5EELE', '5EET']), '5EELEET');
+  assert.equal(jointCalendarName(['3MENE', '3ITEL']), '3MENEITEL');
+  assert.ok(!hit('1BIIN', 'CLASSE 1AIIN - AULA 94'));
+});
+
+test('keywords: surnames, rooms and plain words', () => {
+  assert.ok(hit('ROSSI', 'CLASSE 5CIIN - AULA 94 - PROF. ROSSI'));
+  assert.ok(hit('PIPPÒ', 'CLASSE 5CIIN - PROF. PIPPO'));
+  assert.ok(hit('DEL MODELLO', 'CLASSE 5CIIN - PROF.SSA DEL MODELLO'));
+  assert.ok(hit('AULA 94', 'CLASSE 5CIIN - AULA 94'));
+  assert.ok(hit('ORIENTAMENTO', 'CLASSE 5CIIN - ORIENTAMENTO IN AULA MAGNA'));
+  assert.ok(!hit('ROSSI', 'CLASSE 5CIIN - PROF. BIANCHI'));
+  assert.ok(!hit('AULA 9', 'CLASSE 5CIIN - AULA 94'));
+});
+
+test('keywords: a word after a lone digit is still found ("4 LICEO" is not only 4LICEO)', () => {
+  assert.ok(hit('4', 'CLASSI 4 e 5 - ORIENTAMENTO IN AULA MAGNA'));
+  assert.ok(hit('LICEO', 'RAPPRESENTANTI DI CLASSE 4 LICEO E 4 IT - AULA MAGNA'));
+  assert.ok(hit('4', 'CLASSI 4E - 4 F - AULA 94'));
+  assert.ok(!hit('4', 'CLASSE 5CIIN - AULA 94'));
+  assert.ok(!hit(' ', 'CLASSE 5CIIN - AULA 94'));
+});
+
+test('keywords: never fewer events than the old notifier (its rule as the floor)', () => {
+  const old = (kw, s) =>
+    Boolean(kw.trim()) &&
+    new RegExp(`\\b${kw.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(s.replace(/[^a-zA-Z0-9]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase());
+  const titles = [
+    'CLASSI 4 e 5 - ORIENTAMENTO',
+    'RAPPRESENTANTI DI CLASSE 4 LICEO E 4 IT - AULA MAGNA',
+    'CLASSE 3 CIIN - AULA 94 - PROF.SSA DEL MODELLO',
+    'CLASSE 5ºCIIN - USCITA ANTICIPATA ORE 12',
+    'SPORTELLO MATEMATICA - CLASSE 5CIIN - PROF. ROSSI',
+    'CLASSE 1AIIN - (PROF. PIPPÒ: ASSENTE) - AULA 94',
+    "CLASSE 2A - ATTIVITA' 2 ORE - AULA 1-3 DEBATE",
+  ];
+  const kws = ['4', '5', 'LICEO', 'IT', 'E', 'CIIN', '3 CIIN', '5CIIN', 'ORE', '2 ORE', 'ROSSI', 'MODELLO', 'AULA 94', '1AIIN', 'SPORTELLO', 'DEBATE', '1', '3'];
+  for (const s of titles) for (const kw of kws) if (old(kw, s)) assert.ok(hit(kw, s), `${kw} | ${s}`);
+});
+
+test('keywords: the whole name tells homonyms apart', () => {
+  const homonyms = { ...lists, teacherNames: ['Clarabella Cristina', 'Clarabella Giulia'] };
+  const hitH = (kw, summary) => eventMatches(ev(summary), classifyKeyword(kw, homonyms));
+  assert.deepEqual(classifyKeyword('CLARABELLA GIULIA', homonyms).teachers, ['Clarabella Giulia']);
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSI 4^ IT - AULA 14 - SPORTELLO MATEMATICA - PROF. CLARABELLA G.'));
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSE 4A - PROF.SSA CLARABELLA GIULIA'));
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSE 4A - AULA IMMERSIVA - PROF. SSA CLARABELLA'));
+  assert.ok(hitH('CLARABELLA GIULIA', 'CLASSE 5CIIN - AULA 13 - PROF. ROSSI (PROF. CLARABELLA G.: ASSENTE)'));
+  assert.ok(!hitH('CLARABELLA GIULIA', 'CLASSE 2AEL - PROF. SSA CLARABELLA C.'));
+  assert.ok(!hitH('CLARABELLA GIULIA', 'CLASSE 2AEL - PROF.SSA CLARABELLA CRISTINA'));
+  assert.ok(hitH('CLARABELLA', 'CLASSE 2AEL - PROF. SSA CLARABELLA C.'));
+  assert.ok(hitH('CLARABELLA', 'CLASSI 4^ IT - SPORTELLO MATEMATICA - PROF. CLARABELLA G.'));
+});
+
+test('opt-in categories: help desks and the like for a whole year are set apart', () => {
+  const how = (kw, summary) => eventMatch(ev(summary), classifyKeyword(kw, lists));
+  assert.equal(optInCategory('CLASSI 1^ IT - AULA 10 - SPORTELLO FISICA - PROF. ROSSI'), 'sportelli');
+  assert.equal(optInCategory('AULA 6 - PEER TUTORING FISICA - TUTOR QUA (3A) - CLASSI PRIME'), 'tutoring');
+  assert.equal(optInCategory('SALA EROS - OLIMPIADI DELLA MATEMATICA - CLASSI TRIENNIO'), 'olimpiadi');
+  assert.equal(optInCategory('AULA 5 - INCONTRO DS CON RAPPRESENTANTI CLASSI 1^'), 'rappresentanti');
+  assert.equal(optInCategory('PROGETTO ERASMUS - CLASSI QUARTE IT (2 STUDENTI PER CIASCUNA CLASSE)'), 'few');
+  assert.equal(optInCategory('TUTTE LE CLASSI - USCITA ANTICIPATA'), null);
+  assert.equal(optInCategory('CLASSI 1^, 2^ IT - PROVA RECUPERO INGLESE'), null);
+  // through the year only → 'level'; the class named → 'direct'
+  assert.equal(how('1AIIN', 'CLASSI PRIME - SPORTELLO FISICA'), 'level');
+  assert.equal(how('1AIIN', 'CLASSE 1AIIN - SPORTELLO FISICA'), 'direct');
+  assert.equal(how('1AIIN', 'CLASSI PRIME - ASSEMBLEA IN AULA MAGNA'), 'level');
+  assert.deepEqual(cleanOptIn(['sportelli', 'x', 'sportelli', 'few']), ['sportelli']);
+  // 'gruppo' is chosen by matchKeywords, never from title words
+  assert.deepEqual(cleanOptIn(['gruppo']), ['gruppo']);
+  assert.equal(optInCategory('CLASSI 3^ - GRUPPO TEATRO'), null);
+});
+
+test('keywords: a joint class as the calendar writes it is the site\'s class', () => {
+  const lists = { classKeys: new Set(['5EELE', '5EET', '5EELEEET']), rooms: [], teacherNames: [] };
+  const k = classifyKeyword('5EELEET', lists);
+  assert.deepEqual(k.classKeys, ['5EELEEET']);
+  const ev = (summary) => ({ summary, ...parseSummary(summary) });
+  assert.ok(eventMatches(ev('CLASSE 5EELEET (STUDIO ASSISTITO) - AULA 381'), k));
+  assert.ok(eventMatches(ev('CLASSE 5EELEEET - AULA 381'), k));
+  assert.ok(!eventMatches(ev('CLASSE 5EELEET - AULA 381'), classifyKeyword('5EELE', lists)));
+});
+
+test('calendar surnames: only after a teacher title, seen twice, initials dropped', () => {
+  const titles = [
+    'CLASSE 1A - AULA 94 - PROF. ESEMPIO',
+    'CLASSE 2B - AULA 12 - PROF. ESEMPIO',
+    'CLASSE 3C - AULA 4 - PROFF. FITTIZIO, IPOTETICO (PROF.ssa DEL MODELLO: ASSENTE)',
+    'CLASSE 3D - AULA 5 - PROF. FITTIZIO (PROF.ssa DEL MODELLO ASSENTE)',
+    'CLASSE 4E - AULA 6 - PROF. CAMPIONE F.',
+    'CLASSE 4F - AULA 7 - PROF. CAMPIONE',
+    'AULA 15 - PEER TUTORING MATEMATICA - TUTOR STUDENTE (3A) - CLASSE 2A',
+    'AULA 16 - PEER TUTORING MATEMATICA - TUTOR STUDENTE (3A) - CLASSE 2B',
+    'CLASSE 5A - AULA 8 - PROF. UNAVOLTA',
+  ];
+  assert.deepEqual(surnamesFromTitles(titles), ['CAMPIONE', 'DEL MODELLO', 'ESEMPIO', 'FITTIZIO']);
+  assert.equal(schoolYearStart('2026-10-25'), '2026-09-01');
+  assert.equal(schoolYearStart('2027-02-10'), '2026-09-01');
+});

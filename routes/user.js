@@ -6,6 +6,7 @@ import keywordRouter from './keyword.js';
 import preferencesRouter from './preferences.js';
 import TelegramRouter from './telegram.js';
 import logger from '../utils/logger.js';
+import { openTicket } from '../utils/schoolTicket.js';
 dotenv.config();
 
 const router = express.Router();
@@ -36,9 +37,12 @@ router.get('/profile', async (req, res) => {
                 s.notifications,
                 s.notification_preferences,
                 s.include_similar_tags,
+                s.notify_optin,
                 s.notification_day_before,
                 s.notification_time,
                 s.profile_complete,
+                s.school_username,
+                s.school_ticket,
                 COALESCE(
                     json_agg(
                         json_build_object(
@@ -74,7 +78,9 @@ router.get('/profile', async (req, res) => {
             log.warn('Could not summarize profile push_subscription', { error: e });
         }
 
-        return res.json(result.rows[0]);
+        // The last Moodle login's school session, while valid: teachers on /orario
+        const { school_ticket, ...profile } = result.rows[0];
+        return res.json({ ...profile, school_ticket: openTicket(school_ticket) ? school_ticket : null });
 
     } catch (err) {
         log.error('Profile fetch error', { error: err.stack || err });

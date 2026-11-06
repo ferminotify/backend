@@ -19,7 +19,7 @@ async function getNumberNotification(email){
   try{
     const RES = await pool.query(
       `SELECT notifications FROM subscribers
-        WHERE email = $1`,
+        WHERE lower(email) = lower($1)`,
       [email]
     );
     return RES.rows[0].notifications;
@@ -32,7 +32,7 @@ async function getGenderByEmail(email){
   try {
     const RES = await pool.query(
       `SELECT gender FROM subscribers
-        WHERE email = $1`,
+        WHERE lower(email) = lower($1)`,
       [email]
     );
     return RES.rows[0].gender;
@@ -45,7 +45,7 @@ async function getFirstNameByEmail(email){
   try{
     const RES = await pool.query(
       `SELECT name FROM subscribers
-        WHERE email = $1`,
+        WHERE lower(email) = lower($1)`,
       [email]
     );
     return RES.rows[0].name;
@@ -58,7 +58,7 @@ async function getUnsubscribeInfoByEmail(email){
   try {
     const RES = await pool.query(
       `SELECT id, unsub_token, notification_preferences FROM subscribers
-        WHERE email = $1`,
+        WHERE lower(email) = lower($1)`,
       [email]
     )
     return RES.rows[0];
@@ -87,7 +87,7 @@ async function userExistsByEmail(email){
   try {
     const res = await pool.query(
       `SELECT * FROM subscribers
-        WHERE email = $1`,
+        WHERE lower(email) = lower($1)`,
       [email]
     );
     return res.rows[0];
@@ -99,7 +99,7 @@ async function userExistsByEmail(email){
 async function verifyUserOTP(email, otp) {
   try {
     const RES = await pool.query(
-      `SELECT secret_temp, secret_temp_timestamp FROM subscribers WHERE email = $1`,
+      `SELECT secret_temp, secret_temp_timestamp FROM subscribers WHERE lower(email) = lower($1)`,
       [email]
     );
     if (RES.rows.length === 0) {
