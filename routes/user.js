@@ -7,6 +7,7 @@ import preferencesRouter from './preferences.js';
 import TelegramRouter from './telegram.js';
 import logger from '../utils/logger.js';
 import { openTicket } from '../utils/schoolTicket.js';
+import { signupKeywordList } from '../utils/timetable/match.js';
 dotenv.config();
 
 const router = express.Router();
@@ -172,6 +173,9 @@ router.post('/complete-profile', async (req, res) => {
         return res.status(400).json({ error: 'Genere non valido!' });
     }
 
+    const tags = await signupKeywordList(req.body.keywords ?? req.body.keyword);
+    if (!tags) return res.status(400).json({ error: 'Scrivi la tua classe o il tuo cognome.' });
+
     name = typeof name === 'string' ? name.trim() : undefined;
     surname = typeof surname === 'string' ? surname.trim() : undefined;
 
@@ -206,8 +210,15 @@ router.post('/complete-profile', async (req, res) => {
         }
 
         // Onboarding flag (mirrors /login): true on first entry, then mark done.
-        const ob = await pool.query('SELECT onboarding FROM subscribers WHERE id = $1', [userId]);
+        const ob = await pool.query('SELECT onboarding, tags FROM subscribers WHERE id = $1', [userId]);
         const onboarding = !ob.rows[0]?.onboarding;
+        let keywords = ob.rows[0]?.tags || [];
+        if (tags.length) {
+            const have = new Set(keywords.map((k) => String(k).toUpperCase()));
+            keywords = [...keywords, ...tags.filter((k) => !have.has(k))];
+            fields.push(`tags = $${index++}`);
+            values.push(keywords);
+        }
 
         values.push(userId);
         const query = `UPDATE subscribers SET ${fields.join(', ')} WHERE id = $${index}`;
@@ -215,7 +226,7 @@ router.post('/complete-profile', async (req, res) => {
         await pool.query('UPDATE subscribers SET onboarding = TRUE WHERE id = $1', [userId]);
 
         log.info('Profile completed', { id: userId });
-        return res.status(200).json({ message: 'Profilo completato.', onboarding });
+        return res.status(200).json({ message: 'Profilo completato.', onboarding, keywords });
     } catch (error) {
         log.error('Error completing profile', { error: error.stack || error });
         return res.status(500).json({ error: 'Internal server error.' });

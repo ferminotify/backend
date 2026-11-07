@@ -305,6 +305,41 @@ export async function jointKeywords(kw) {
   return [...jointClasses(classKeys).values()].filter((parts) => parts.includes(joined)).map(jointCalendarName);
 }
 
+/**
+ * Keywords for what a signup gives ("Classe o docente"): a class with its joint classes, or a surname.
+ * A class not on the site ("5ELEE") is kept as written: the dashboard flags it. null: under 2 letters.
+ * @returns {Promise<string[] | null>}
+ */
+export async function signupKeywords(value) {
+  const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, 60).toUpperCase() : '';
+  const joined = keywordWords(text).join('');
+  if (!joined) return text ? null : [];
+  if (joined.length < 2) return null;
+  if (!/^[1-5][A-Z]/.test(joined)) return [text];
+  let classKeys;
+  try {
+    classKeys = classKeysOf(await getIndex());
+  } catch {
+    return [joined];
+  }
+  if (classKeys.has(joined)) return [joined, ...(await jointKeywords(joined))];
+  return [joined];
+}
+
+/**
+ * Every keyword a signup gives: `keywords` (array, at most 5) or the older single `keyword`.
+ * null: one of them is invalid (see signupKeywords).
+ */
+export async function signupKeywordList(values) {
+  const out = [];
+  for (const value of (Array.isArray(values) ? values : [values]).slice(0, 5)) {
+    const tags = await signupKeywords(value);
+    if (!tags) return null;
+    for (const t of tags) if (!out.some((o) => o.toUpperCase() === t.toUpperCase())) out.push(t);
+  }
+  return out;
+}
+
 /** Keys of the classes in a public index (already uppercase, see entityKey). */
 const classKeysOf = (pub) => new Set(pub.class.map((c) => c.key));
 

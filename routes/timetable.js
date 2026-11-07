@@ -114,20 +114,22 @@ router.get('/', async (req, res) => {
       });
     }
     const list = (l) => (l || []).map(({ key, name }) => ({ key, name }));
-    setCache(req, res, 3600);
+    const calendarTeachers = calendarSurnames();
+    // Surnames still loading (after a restart): not cached, or browsers keep [] for an hour
+    setCache(req, res, calendarTeachers.length ? 3600 : 0);
     res.json({
       classes: list(pub.class),
       rooms: list(pub.room),
       // null = not available to this user; [] = allowed but the school site failed
       teachers: canSeeTeachers(req) ? list(priv?.teacher) : null,
       // Public: surnames printed in the calendar's titles (keyword suggestions)
-      calendarTeachers: calendarSurnames(),
+      calendarTeachers,
       schoolSession: Boolean(session),
     });
   } catch (err) {
     if (err instanceof SchoolSessionExpired) return sessionExpired(req, res);
     log.error('Index failed', { error: err.message });
-    res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
+    res.status(502).json({ error: 'Orario Fermi non raggiungibile' });
   }
 });
 
@@ -148,7 +150,7 @@ router.get('/:type/:ref', async (req, res) => {
   } catch (err) {
     if (err instanceof SchoolSessionExpired) return sessionExpired(req, res);
     log.error('Week failed', { type, ref: req.params.ref, error: err.message });
-    res.status(502).json({ error: 'Orario della scuola non raggiungibile' });
+    res.status(502).json({ error: 'Orario Fermi non raggiungibile' });
   }
 });
 
