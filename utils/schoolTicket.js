@@ -30,9 +30,10 @@ export function sealTicket(session, now = Date.now()) {
 /**
  * Ticket only for accounts the school lets see the teachers (else null, session closed).
  * Saved on the account: its other logins reuse it while valid (profile, routes/user.js).
+ * `sealed`: a ticket made earlier for this session, kept with its expiry (POST /moodle/link).
  */
-export async function teacherTicket(session, userId) {
-  let ticket = sealTicket(session);
+export async function teacherTicket(session, userId, sealed = sealTicket(session)) {
+  let ticket = sealed;
   try {
     if (!(await sessionSeesTeachers(session))) {
       await logoutSession(session);

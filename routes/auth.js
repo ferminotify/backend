@@ -23,6 +23,7 @@ import { clientIp, schoolLoginFailed, schoolLoginLimited, schoolLoginSucceeded }
 import { teacherTicket } from '../utils/schoolTicket.js';
 import { refuseUnconfirmed } from '../utils/confirmReminder.js';
 import { loginWith, logoutSession, SchoolLoginError } from '../utils/timetable/index.js';
+import { signupKeywordList } from '../utils/timetable/match.js';
 dotenv.config();
 
 const router = express.Router();
@@ -67,6 +68,8 @@ router.put('/register', async (req, res) => {
         log.error('Validation error during register', { error: err.stack || err });
         return res.status(500).json({ error: 'Errore interno!' });
     }
+    const tags = await signupKeywordList(req.body.keywords ?? req.body.keyword);
+    if (!tags) return res.status(400).json({ error: 'Scrivi la tua classe o il tuo cognome.' });
     // If email already exists: if confirmed (notifications > -1) => error, else resend confirmation email and return 200
     try {
         const existing = await pool.query(
@@ -84,8 +87,8 @@ router.put('/register', async (req, res) => {
                 await client.query('BEGIN');
                 const hashed = await bcrypt.hash(password, 10);
                 const upd = await client.query(
-                    'UPDATE subscribers SET name = $1, surname = $2, password = $3, gender = $4, school_username = NULL WHERE id = $5 RETURNING id, email, unsub_token, telegram, name as db_name, gender as db_gender',
-                    [name, surname, hashed, gender, row.id]
+                    'UPDATE subscribers SET name = $1, surname = $2, password = $3, gender = $4, school_username = NULL, tags = COALESCE($6::text[], tags) WHERE id = $5 RETURNING id, email, unsub_token, telegram, name as db_name, gender as db_gender',
+                    [name, surname, hashed, gender, row.id, tags.length ? tags : null]
                 );
                 await client.query('DELETE FROM refresh_tokens WHERE sub_id = $1', [row.id]);
                 const updated = upd.rows[0];
@@ -127,10 +130,10 @@ router.put('/register', async (req, res) => {
         const hashed = await bcrypt.hash(password, 10);
         const telegramTemporaryCode = await getTelegramTemporaryCode();
         const result = await client.query(
-        `INSERT INTO subscribers (name, surname, email, password, notifications, telegram, gender, notification_preferences)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO subscribers (name, surname, email, password, notifications, telegram, gender, notification_preferences, tags)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING id, unsub_token, notification_preferences, email`,
-          [name, surname, email, hashed, -1, telegramTemporaryCode, gender, 2],
+          [name, surname, email, hashed, -1, telegramTemporaryCode, gender, 2, tags.length ? tags : null],
         );
 
         const confirm_link = `${URL}/user/auth/register/confirmation/${telegramTemporaryCode}`;
@@ -232,7 +235,7 @@ router.post('/login', async (req, res) => {
                 return res.status(401).json({ error: 'Invalid credentials' });
             }
             log.error('Login failed - school site unreachable', { id: user.id, error: err.message });
-            return res.status(502).json({ error: 'Sito della scuola non raggiungibile, riprova più tardi' });
+            return res.status(502).json({ error: 'Sito del Fermi non raggiungibile, riprova più tardi' });
         }
     } else {
         // Google-only accounts have no password set.
