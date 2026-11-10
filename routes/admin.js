@@ -5,8 +5,11 @@
 //
 // Env (the pages are a 404 when ADMIN_PASSWORD or ADMIN_DB_PASSWORD is missing):
 //   ADMIN_USER, ADMIN_PASSWORD        basic auth
-//   ADMIN_DB_USER, ADMIN_DB_PASSWORD  read-only login (staging/metabase/grants.sql: no password hashes, codes,
-//                                     tokens or push keys); same host and database as DB_* in db.js
+//   ADMIN_DB_USER, ADMIN_DB_PASSWORD  read-only login, default user admin_ro (staging/metabase/grants.sql with that
+//                                     role name: no password hashes, codes, tokens or push keys)
+//   ADMIN_DB_HOST, ADMIN_DB_PORT      server to read, when not DB_HOST/DB_PORT (staging: production)
+//   ADMIN_DB_SSL                      'true' = TLS with certificate check (ADMIN_DB_SSL_CERT or DB_SSL_CERT, else the
+//                                     system CAs); default: as db.js, TLS when DB_SSL_CERT is set
 //   ADMIN_DB_SCHEMA                   'public' (default), or 'demo' for the made-up data on staging
 //   ADMIN_DB_DATABASE                 database to read, when not DB_DATABASE (staging: a copy of production)
 //   ADMIN_DATA_NOTE                   banner on every page saying which data these are (staging)
@@ -38,16 +41,22 @@ const ENABLED = Boolean(PASSWORD && process.env.ADMIN_DB_PASSWORD) && /^[a-z_][a
 if (!ENABLED) log.info('Admin pages disabled (ADMIN_PASSWORD, ADMIN_DB_PASSWORD or ADMIN_DB_SCHEMA missing or invalid)');
 
 // Read-only on two levels: the role has SELECT only, and every transaction is read-only anyway.
+function adminSsl() {
+  const ca = process.env.ADMIN_DB_SSL_CERT || process.env.DB_SSL_CERT;
+  if (process.env.ADMIN_DB_SSL === 'true') return ca ? { rejectUnauthorized: true, ca } : { rejectUnauthorized: true };
+  return process.env.DB_SSL_CERT ? { rejectUnauthorized: true, ca: process.env.DB_SSL_CERT } : false;
+}
+
 let pool = null;
 function db() {
   if (pool) return pool;
   pool = new Pool({
-    host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT || 5432),
+    host: process.env.ADMIN_DB_HOST || process.env.DB_HOST,
+    port: Number(process.env.ADMIN_DB_PORT || process.env.DB_PORT || 5432),
     database: process.env.ADMIN_DB_DATABASE || process.env.DB_DATABASE,
-    user: process.env.ADMIN_DB_USER || 'metabase_ro',
+    user: process.env.ADMIN_DB_USER || 'admin_ro',
     password: process.env.ADMIN_DB_PASSWORD,
-    ssl: process.env.DB_SSL_CERT ? { rejectUnauthorized: true, ca: process.env.DB_SSL_CERT } : false,
+    ssl: adminSsl(),
     max: 3,
     idleTimeoutMillis: 60000,
   });
