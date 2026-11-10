@@ -11,6 +11,7 @@ import timetableRouter from './routes/timetable.js';
 import moodleRouter from './routes/moodle.js';
 import reportRouter from './routes/report.js';
 import unsubscribeRouter from './routes/unsubscribe.js';
+import adminRouter from './routes/admin.js';
 import cookieParser from 'cookie-parser';
 
 dotenv.config();
@@ -44,6 +45,10 @@ app.use((req, res, next) => {
   log.debug(`Incoming request: ${req.method} ${req.originalUrl} from origin: ${req.headers.origin || 'no-origin'}`);
   next();
 });
+
+// Admin pages (HTML, basic auth): before the media router, which is mounted at the root, and before CORS
+// (page navigations, no cross-origin requests).
+app.use('/admin', adminRouter);
 
 // Media route without CORS restrictions (for backend server-to-server access)
 // Mounted at root to expose folders directly: /email/v3/logo.png, /email/v4/logo.png, etc.
