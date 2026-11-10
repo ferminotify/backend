@@ -31,7 +31,9 @@ CREATE TABLE public.subscribers (
     profile_complete         boolean                DEFAULT true,
     school_username          character varying(150) UNIQUE,
     notify_optin             text[]                 NOT NULL DEFAULT ARRAY['gruppo', 'olimpiadi', 'rappresentanti']::text[], -- OPT_IN (match.js) minus sportelli and tutoring, off by default
-    school_ticket            text
+    school_ticket            text,
+    email_inactive_at        timestamptz,
+    email_inactive_reason    text
 );
 
 -- ── refresh_tokens ────────────────────────────────────────────────────────────
@@ -130,6 +132,30 @@ CREATE TABLE public.filtra_eventi_kw (
     "timestamp" timestamp with time zone DEFAULT now(),
     email       character varying
 );
+
+-- ── email_sends / email_bounces (migrations 2026-10-30, 2026-11-01) ───────────
+
+CREATE TABLE public.email_sends (
+    id         uuid        PRIMARY KEY,
+    sub_id     bigint      NOT NULL REFERENCES public.subscribers(id) ON DELETE CASCADE,
+    kind       text        NOT NULL,
+    sent_at    timestamptz NOT NULL DEFAULT now(),
+    opened_at  timestamptz,
+    via        text
+);
+CREATE INDEX email_sends_sent_at ON public.email_sends (sent_at);
+CREATE INDEX email_sends_sub     ON public.email_sends (sub_id, sent_at);
+
+CREATE TABLE public.email_bounces (
+    id        bigserial   PRIMARY KEY,
+    sub_id    bigint      NOT NULL REFERENCES public.subscribers(id) ON DELETE CASCADE,
+    email     text        NOT NULL,
+    provider  text        NOT NULL,
+    status    text        NOT NULL,
+    reason    text,
+    at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX email_bounces_sub ON public.email_bounces (sub_id, at);
 
 -- ── trigger last_login (presente in produzione) ───────────────────────────────
 
