@@ -1,0 +1,13 @@
+<%# Scheda utente. Locals: data/utente.js %>
+<p class="meta"><a href="utenti">Utenti</a><span><%= u.email %></span><span>ID <%= u.id %></span>
+  <% if (u.notifications < 0) { %><span class="badge warn">Da confermare</span><% } else { %><span class="badge ok">Attivo</span><% } %>
+  <% if (u.stato_casella) { %><span class="badge bad">Casella eliminata, <%= u.stato_casella.toLowerCase() %></span><% } %></p>
+<%- include('/components/stats', { items: summary }) %>
+<div class="grid2 stack">
+  <%- include('/components/card', { title: 'Profilo', body: '/pages/utente/profile', data: { u, daily } }) %>
+  <%- include('/components/card', { title: 'Dispositivi push', body: '/pages/utente/devices', data: { devices }, empty: !devices.length && 'Nessun dispositivo.' }) %>
+</div>
+<div class="stack">
+  <%- include('/components/card', { title: 'Email ricevute', sub: appleNote, body: '/components/list', region: 'list', data: list }) %>
+</div>
+<%- include('/components/card', { title: 'Rifiuti dei server di posta', body: '/pages/utente/bounces', data: { bounces }, empty: !bounces.length && 'Nessun rifiuto.' }) %>

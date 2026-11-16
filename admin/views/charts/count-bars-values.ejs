@@ -1,0 +1,6 @@
+<div class="vals" aria-hidden="true">
+<% for (const v of values) { %>
+  <% if (v.cap) { %><i class="cap" style="left:<%= v.left %>%;width:<%= v.w %>%;bottom:<%= v.bottom %>%"></i><% } %>
+  <span style="left:<%= v.left %>%;bottom:<%= v.bottom %>%"><%= v.text %></span>
+<% } %>
+</div>

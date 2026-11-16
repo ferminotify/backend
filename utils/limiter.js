@@ -89,3 +89,22 @@ export function reportLimited(ip) {
   reportDay.count += 1;
   return false;
 }
+
+// Admin pages (routes/admin.js): wrong basic-auth credentials per IP, then locked out for the window
+const ADMIN_FAILURES_MAX = 10;
+const adminFailures = new Map(); // ip -> { count, reset }
+
+/** True when this IP got the admin credentials wrong too many times recently. */
+export function adminAuthBlocked(ip) {
+  const entry = adminFailures.get(ip);
+  return !!entry && entry.reset > Date.now() && entry.count >= ADMIN_FAILURES_MAX;
+}
+
+/** A wrong admin username or password from this IP. */
+export function adminAuthFailed(ip) {
+  const now = Date.now();
+  const entry = adminFailures.get(ip);
+  if (entry && entry.reset > now) entry.count += 1;
+  else adminFailures.set(ip, { count: 1, reset: now + 15 * MINUTE_MS });
+  if (adminFailures.size > 5000) for (const [k, v] of adminFailures) if (v.reset < now) adminFailures.delete(k);
+}

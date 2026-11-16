@@ -1,0 +1,2 @@
+<%# Legend of a chart. legend: [{ label, cls, kind: 'box'|'line'|'dash' }] %>
+<ul class="legend"><% for (const it of legend) { %><li><i class="<%= it.cls %> <%= it.kind %>"></i><%= it.label %></li><% } %></ul>

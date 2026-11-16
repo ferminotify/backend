@@ -1,0 +1,6 @@
+<%# Row of headline numbers. items: [{ label, value, tone? ('bad'|'warn') }] %>
+<dl class="stats">
+<% for (const it of items) { %>
+  <div class="<%= it.tone || '' %>"><dt><%= it.label %></dt><dd><%= it.value %></dd></div>
+<% } %>
+</dl>

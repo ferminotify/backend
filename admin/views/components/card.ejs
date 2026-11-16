@@ -1,0 +1,11 @@
+<%# Panel. title, sub?, cls?, body + data, empty? (text instead of body), region? (?part name). Included views also see caller locals: pass every optional. %>
+<section class="card <%= locals.cls || '' %>">
+  <header><h2><%= title %></h2><% if (locals.sub) { %><p><%= sub %></p><% } %></header>
+  <% if (locals.empty) { %>
+  <%- include('empty', { text: empty }) %>
+  <% } else if (locals.region) { %>
+  <div data-region="<%= region %>"><%- include(body, data) %></div>
+  <% } else { %>
+  <%- include(body, data) %>
+  <% } %>
+</section>

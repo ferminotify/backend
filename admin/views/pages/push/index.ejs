@@ -1,0 +1,17 @@
+<%# Push. Locals: data/push.js %>
+<%- include('/components/stats', { items: summary }) %>
+<div class="stack">
+  <%- include('/components/card', { title: 'Registrati per settimana', body: '/charts/columns',
+    empty: !anyWeekly && 'Nessun dispositivo registrato nelle ultime 16 settimane.',
+    data: h.columns({
+      label: 'Dispositivi registrati per settimana, ultime 16 settimane', every: 2, totals: true,
+      series: [{ label: 'Dispositivi', cls: 'c-data' }], items: weekly,
+    }) }) %>
+</div>
+<div class="grid2 stack">
+  <%- include('/components/card', { title: 'Sistema', body: '/charts/h-bars', empty: !os.length && 'Nessun dispositivo.',
+    data: h.hBars({ rows: os, label: 'Dispositivi per sistema' }) }) %>
+  <%- include('/components/card', { title: 'Browser', body: '/charts/h-bars', empty: !browser.length && 'Nessun dispositivo.',
+    data: h.hBars({ rows: browser, label: 'Dispositivi per browser' }) }) %>
+</div>
+<%- include('/components/card', { title: 'Dispositivi', body: '/pages/push/list', region: 'list', data: locals }) %>

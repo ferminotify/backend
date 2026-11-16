@@ -1,0 +1,8 @@
+<%# One log row; same columns as COLS in data/log.js. Locals: r %>
+<% const esito = { error: ['Errore', 'bad'], success: ['Riuscito', 'ok'], info: ['Info', ''] }[r.type] || [r.type, '']; %>
+<tr>
+  <td><%= h.dateTime(new Date(r.timestamp)) %></td>
+  <td><%= r.servizio %></td>
+  <td><span class="badge <%= esito[1] %>"><%= esito[0] %></span></td>
+  <td class="wrap"><%= r.message || '' %></td>
+</tr>

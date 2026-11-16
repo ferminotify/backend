@@ -31,7 +31,9 @@ CREATE TABLE public.subscribers (
     profile_complete         boolean                DEFAULT true,
     school_username          character varying(150) UNIQUE,
     notify_optin             text[]                 NOT NULL DEFAULT ARRAY['gruppo', 'olimpiadi', 'rappresentanti']::text[], -- OPT_IN (match.js) minus sportelli and tutoring, off by default
-    school_ticket            text
+    school_ticket            text,
+    email_inactive_at        timestamptz,
+    email_inactive_reason    text
 );
 
 -- ── refresh_tokens ────────────────────────────────────────────────────────────
@@ -131,6 +133,30 @@ CREATE TABLE public.filtra_eventi_kw (
     email       character varying
 );
 
+-- ── email_sends / email_bounces (migrations 2026-10-30, 2026-11-01) ───────────
+
+CREATE TABLE public.email_sends (
+    id         uuid        PRIMARY KEY,
+    sub_id     bigint      NOT NULL REFERENCES public.subscribers(id) ON DELETE CASCADE,
+    kind       text        NOT NULL,
+    sent_at    timestamptz NOT NULL DEFAULT now(),
+    opened_at  timestamptz,
+    via        text
+);
+CREATE INDEX email_sends_sent_at ON public.email_sends (sent_at);
+CREATE INDEX email_sends_sub     ON public.email_sends (sub_id, sent_at);
+
+CREATE TABLE public.email_bounces (
+    id        bigserial   PRIMARY KEY,
+    sub_id    bigint      NOT NULL REFERENCES public.subscribers(id) ON DELETE CASCADE,
+    email     text        NOT NULL,
+    provider  text        NOT NULL,
+    status    text        NOT NULL,
+    reason    text,
+    at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX email_bounces_sub ON public.email_bounces (sub_id, at);
+
 -- ── trigger last_login (presente in produzione) ───────────────────────────────
 
 CREATE FUNCTION public.update_last_login() RETURNS trigger
@@ -150,3 +176,34 @@ VALUES
     ('Test', 'User', 'test@example.com',
      '$2a$10$KX5C7cT8OYoXGsR.8WSYd.49/wRHJTe5ZPDqJP1BYEnlAB/ddeLEi',
      0, 'Xtest01', 'M', 2, FALSE);
+
+-- ── admin_ro: read-only login for the admin pages (routes/admin.js) ───────────
+-- Same grants as production (checked 2026-11-16): SELECT only, column by column, on the tables the
+-- pages read; no password hashes, codes, tokens or push keys.
+-- Dev password: "test" (docker-compose.dev.yml, ADMIN_DB_PASSWORD).
+
+DO $$
+DECLARE t record;
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin_ro') THEN
+        CREATE ROLE admin_ro LOGIN PASSWORD 'test';
+    END IF;
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO admin_ro', current_database());
+    GRANT USAGE ON SCHEMA public TO admin_ro;
+    FOR t IN
+        SELECT table_name, string_agg(quote_ident(column_name), ', ') AS cols
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name IN ('classes', 'email_bounces', 'email_sends', 'logs_backup_notifier',
+                              'logs_notifier', 'push', 'push_sent', 'sent', 'subscribers')
+           AND (table_name, column_name) NOT IN (
+                ('subscribers', 'password'), ('subscribers', 'secret_temp'),
+                ('subscribers', 'secret_temp_timestamp'), ('subscribers', 'unsub_token'),
+                ('subscribers', 'school_ticket'), ('subscribers', 'google_id'),
+                ('subscribers', 'temp_sent'),
+                ('push', 'endpoint'), ('push', 'p256dh'), ('push', 'auth'), ('push', 'device_id'))
+         GROUP BY table_name
+    LOOP
+        EXECUTE format('GRANT SELECT (%s) ON public.%I TO admin_ro', t.cols, t.table_name);
+    END LOOP;
+END $$;

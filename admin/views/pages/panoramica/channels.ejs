@@ -1,0 +1,8 @@
+<ul class="channels">
+<% for (const c of channels) { %>
+  <li>
+    <span class="name"><%= c.name %></span><span class="n"><%= c.n %><small><%= c.share %></small></span>
+    <span class="meter" style="width:<%= c.width %>%"></span>
+  </li>
+<% } %>
+</ul>

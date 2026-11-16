@@ -1,0 +1,10 @@
+<%# Log. Locals: data/log.js %>
+<%- include('/components/filters', period) %>
+<%- include('/components/stats', { items: summary }) %>
+<div class="grid2 stack">
+  <%- include('/components/card', { title: `Cicli per giorno`, body: '/charts/columns',
+    data: h.columns(daily), empty: !anyCycles && 'Nessun ciclo nel periodo.' }) %>
+  <%- include('/components/card', { title: 'Errori più frequenti', body: '/charts/h-bars',
+    data: h.hBars({ rows: errorKinds, label: 'Errori per tipo nel periodo', cls: 'c-bad' }), empty: !errorKinds.length && 'Nessun errore nel periodo.' }) %>
+</div>
+<%- include('/components/card', { title: 'Log', body: '/pages/log/list', region: 'list', data: locals }) %>

@@ -1,4 +1,4 @@
--- Opt-in notification categories (utils/timetable/optIn.js): help desks, peer tutoring,
+-- Opt-in notification categories (utils/timetable/match.js): help desks, peer tutoring,
 -- competitions, representatives' meetings listed for a whole year are notified only to
 -- users who chose them. Empty = only when the title names their class (as before).
 -- Idempotent: safe to run more than once. Additive only (column with a default).

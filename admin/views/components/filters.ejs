@@ -1,0 +1,15 @@
+<%# GET filter form, applied on change by assets/admin.js. fields: [{ name, label, value, options?, placeholder? }], keep: extra params. %>
+<form class="filters" method="get">
+<% for (const [k, v] of Object.entries(locals.keep || {})) { if (v) { %>
+  <input type="hidden" name="<%= k %>" value="<%= v %>">
+<% } } %>
+<% for (const f of fields) { %>
+  <% if (f.options) { %>
+  <label><span><%= f.label %></span><select name="<%= f.name %>">
+    <% for (const [v, l] of f.options) { %><option value="<%= v %>"<% if (String(v) === String(f.value)) { %> selected<% } %>><%= l %></option><% } %>
+  </select></label>
+  <% } else { %>
+  <label class="grow"><span><%= f.label %></span><input type="search" name="<%= f.name %>" value="<%= f.value || '' %>" placeholder="<%= f.placeholder || '' %>" autocomplete="off"></label>
+  <% } %>
+<% } %>
+</form>

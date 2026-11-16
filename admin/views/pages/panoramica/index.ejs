@@ -1,0 +1,16 @@
+<%# Panoramica. Locals: data/panoramica.js %>
+<section class="health <%= health.cls %>" aria-label="Stato del notifier">
+  <strong><%= health.state %></strong>
+  <span>Ultimo ciclo riuscito: <% if (health.ago) { %><b><%= health.ago %></b> (<%= health.at %>)<% } else { %><b>nessuno</b><% } %></span>
+  <span>Cicli con errori nelle ultime 24 ore: <b><%= health.errors %></b></span>
+</section>
+<div class="overview">
+  <%- include('/components/card', { title: 'Iscritti', cls: 'people', body: '/pages/panoramica/people', data: people }) %>
+  <%- include('/components/card', { title: 'Canali notifiche', body: '/pages/panoramica/channels', data: { channels } }) %>
+</div>
+<div class="grid2">
+  <%- include('/components/card', { title: 'Aperture delle email, 30 giorni', sub: rate.sub, body: '/pages/panoramica/rate', data: rate,
+    empty: !rate.any && 'Nessuna email giornaliera o last minute inviata negli ultimi 30 giorni.' }) %>
+  <%- include('/components/card', { title: 'Cicli del notifier, 7 giorni', sub: cycles.sub, body: '/pages/panoramica/cycles', data: cycles,
+    empty: !cycles.any && 'Nessun ciclo registrato negli ultimi 7 giorni.' }) %>
+</div>

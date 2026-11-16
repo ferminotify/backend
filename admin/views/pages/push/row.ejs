@@ -1,0 +1,8 @@
+<%# One push device; same columns as COLS in data/push.js. Locals: r %>
+<tr>
+  <td><%= r.created_at ? h.dateTime(new Date(r.created_at)) : '–' %></td>
+  <td><a class="user" href="utente?id=<%= r.sub_id %>"><%= r.email %></a></td>
+  <td class="wrap"><%= r.device_info %></td>
+  <td><% if (r.send_push_with_notifications) { %><span class="badge ok">Sì</span><% } else { %><span class="badge">No</span><% } %></td>
+  <td class="num"><%= r.sub_id %></td>
+</tr>

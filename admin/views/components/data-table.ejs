@@ -1,0 +1,5 @@
+<%# Numbers behind a chart, folded. cols: [header, ...], rows: [[cell, ...]] (first cell = row heading) %>
+<details><summary>Mostra i numeri</summary><div class="scroll"><table>
+  <thead><tr><% for (const c of cols) { %><th scope="col"><%= c %></th><% } %></tr></thead>
+  <tbody><% for (const r of rows) { %><tr><% r.forEach((c, i) => { %><% if (i === 0) { %><th scope="row"><%= c %></th><% } else { %><td><%= c %></td><% } %><% }) %></tr><% } %></tbody>
+</table></div></details>

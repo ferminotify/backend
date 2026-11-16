@@ -39,6 +39,7 @@ router.get('/profile', async (req, res) => {
                 s.notification_preferences,
                 s.include_similar_tags,
                 s.notify_optin,
+                s.email_inactive_at,
                 s.notification_day_before,
                 s.notification_time,
                 s.profile_complete,
