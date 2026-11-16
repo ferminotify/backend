@@ -1,7 +1,7 @@
 // Log: cycles and errors of the notifier and of the backup notifier; the two logs as one list.
 import { html, region, card, stats, hBars, columns, filters, listView, badge, empty, num, dayMonth, weekday, dateTime, ago } from './ui.js';
 import { pick, text, like, link, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from './lists.js';
-import { perDay } from './sql.js';
+import { perDay, cycleLog, CYCLE_AGGS } from './sql.js';
 
 const GIORNI = [[1, '24 ore'], [7, '7 giorni'], [30, '30 giorni']];
 const SERVIZI = [['', 'Tutti'], ['notifier', 'Notifier'], ['riserva', 'Riserva']];
@@ -43,15 +43,16 @@ export async function log(db, req) {
   ], keep: { giorni: req.query.giorni, ...keepSort(req) } })}
   ${listView({ cols: COLS, ...page, ord: ls.ord, dir: ls.dir, perPage: PER_PAGE, link: (c) => link(req, c), emptyText: 'Nessuna riga con questi filtri.' })}`;
   if (req.query.part === 'list') return { fragment: listBody(await runList(db, req, ls)) };
-  const W = `timestamp >= now() - ${giorni} * interval '1 day'`;
+  const SINCE = `now() - ${giorni} * interval '1 day'`;
+  const W = `timestamp >= ${SINCE}`;
   const q = (sql) => db.query(sql).then((r) => r.rows);
   const chartDays = Math.max(giorni, 7);
   const [[s], daily, kinds, page] = await Promise.all([
     q(`SELECT (SELECT max(timestamp) FROM logs_notifier WHERE type = 'success') AS ultimo,
-         (SELECT count(*) FROM logs_notifier WHERE type = 'error' AND ${W})::int AS errori,
+         (SELECT count(DISTINCT cycle) FILTER (WHERE type = 'error') FROM ${cycleLog(SINCE)})::int AS errori,
          (SELECT count(*) FROM logs_notifier WHERE type = 'success' AND ${W})::int AS riusciti,
          (SELECT count(*) FROM logs_backup_notifier WHERE type = 'error' AND ${W})::int AS riserva`),
-    q(perDay(chartDays, 'logs_notifier', 'timestamp', [['riusciti', "count(*) FILTER (WHERE type = 'success')"], ['errori', "count(*) FILTER (WHERE type = 'error')"]])),
+    q(perDay(chartDays, cycleLog(`now() - ${chartDays + 1} * interval '1 day'`), 'timestamp', CYCLE_AGGS)),
     // Same error with different numbers or addresses = one kind: digits and emails replaced.
     q(`SELECT servizio || ': ' || left(regexp_replace(regexp_replace(message, '\\S+@\\S+', '<email>', 'g'), '[0-9]+', 'N', 'g'), 90) AS label,
          count(*)::int AS n
@@ -68,18 +69,19 @@ export async function log(db, req) {
       keep: { servizio: l.servizio, esito: l.esito, q: l.q, ...keepSort(req) } })}
 ${stats([
   { label: 'Ultimo ciclo riuscito', value: last ? ago(last) : 'Nessuno' },
-  { label: `Errori, ${period}`, value: num(s.errori), tone: s.errori ? 'bad' : '' },
+  { label: `Cicli con errori, ${period}`, value: num(s.errori), tone: s.errori ? 'bad' : '' },
   { label: `Cicli riusciti, ${period}`, value: num(s.riusciti) },
   { label: `Allarmi della riserva, ${period}`, value: num(s.riserva), tone: s.riserva ? 'warn' : '' },
 ])}
 <div class="grid2 stack">
-  ${card({ title: `Cicli per giorno, ${chartDays} giorni`, body: daily.some((r) => r.riusciti + r.errori) ? columns({
+  ${card({ title: `Cicli per giorno, ${chartDays} giorni`, body: daily.some((r) => r.riusciti + r.con_errori) ? columns({
     label: `Cicli del notifier per giorno, ultimi ${chartDays} giorni`, every: chartDays > 7 ? 7 : 1,
-    series: [{ label: 'Riusciti', cls: 'c-gray' }, { label: 'Errori', cls: 'c-bad' }],
+    series: [{ label: 'Senza errori', cls: 'c-gray' }, { label: 'Con errori', cls: 'c-bad' }],
+    // A cycle with errors usually still ends with its success row: split the successes, don't add to them.
     items: daily.map((r) => ({
-      x: chartDays > 7 ? dayMonth(r.iso) : weekday(r.iso), parts: [r.riusciti, r.errori],
-      sub: chartDays <= 7 && r.errori ? `${num(r.errori)} err.` : null,
-      title: `${dayMonth(r.iso)}: ${num(r.riusciti)} riusciti, ${num(r.errori)} errori`,
+      x: chartDays > 7 ? dayMonth(r.iso) : weekday(r.iso), parts: [Math.max(0, r.riusciti - r.con_errori), r.con_errori],
+      sub: chartDays <= 7 && r.con_errori ? num(r.con_errori) : null,
+      title: `${dayMonth(r.iso)}: ${num(r.riusciti)} riusciti, ${num(r.con_errori)} con errori`,
     })),
   }) : empty('Nessun ciclo nel periodo.') })}
   ${card({ title: 'Errori più frequenti', body: kinds.length ? hBars({

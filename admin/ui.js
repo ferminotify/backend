@@ -69,6 +69,9 @@ function countAxis(max) {
   return { top: step * steps, ticks: Array.from({ length: steps + 1 }, (_, i) => i * step) };
 }
 
+/** x label near a side of the plot: anchored to that side instead of centered, so it doesn't spill out. */
+const edge = (at) => (at < 6 ? raw(' class="start"') : at > 94 ? raw(' class="end"') : '');
+
 /** Plot box: y labels on the left, SVG (viewBox 0..100 both ways, stretched), x labels under it. */
 const frame = ({ ticks, top, fmt, svg, xLabels, overlay, label }) => html`<div class="chart" role="img" aria-label="${label}">
   <div class="y" aria-hidden="true">${ticks.map((t) => html`<span style="bottom:${(t / top) * 100}%">${fmt(t)}</span>`)}</div>
@@ -78,7 +81,7 @@ const frame = ({ ticks, top, fmt, svg, xLabels, overlay, label }) => html`<div c
       ${svg}
     </svg>
   </div>
-  <div class="x" aria-hidden="true">${xLabels.map((l) => html`<span style="left:${l.at}%">${l.text}${l.sub ? html`<b>${l.sub}</b>` : ''}</span>`)}</div>
+  <div class="x" aria-hidden="true">${xLabels.map((l) => html`<span${edge(l.at)} style="left:${l.at}%">${l.text}${l.sub ? html`<b>${l.sub}</b>` : ''}</span>`)}</div>
 </div>`;
 
 /**
@@ -112,7 +115,7 @@ export function rateLines({ days, series, titles, every = 7, label }) {
  * Bars of counts, one per day, value written above; `flag` = red note under the day label (e.g. errors).
  * bars: [{ iso, value, title, flag }]
  */
-export function countBars({ bars, label, legendLabel }) {
+export function countBars({ bars, label, legendLabel, flagLabel = 'Errori nel giorno' }) {
   const n = bars.length;
   const { top, ticks } = countAxis(Math.max(0, ...bars.map((b) => b.value)));
   const w = (100 / n) * 0.56;
@@ -124,7 +127,7 @@ export function countBars({ bars, label, legendLabel }) {
   const values = html`<div class="vals" aria-hidden="true">${bars.map((b, i) => html`
     ${b.flag ? html`<i class="cap" style="left:${((i + 0.5) / n) * 100}%;width:${w}%;bottom:${(b.value / top) * 100}%"></i>` : ''}
     <span style="left:${((i + 0.5) / n) * 100}%;bottom:${(b.value / top) * 100}%">${num(b.value)}</span>`)}</div>`;
-  return html`${legend([[legendLabel, 'c-bar'], ...(bars.some((b) => b.flag) ? [['Errori nel giorno', 'c-bad']] : [])])}${frame({
+  return html`${legend([[legendLabel, 'c-bar'], ...(bars.some((b) => b.flag) ? [[flagLabel, 'c-bad']] : [])])}${frame({
     ticks, top, fmt: num, svg, overlay: values, label,
     xLabels: bars.map((b, i) => ({ at: ((i + 0.5) / n) * 100, text: weekday(b.iso), sub: b.flag })),
   })}`;
@@ -341,6 +344,8 @@ h2{font-size:15px;font-weight:650;margin:0;letter-spacing:-.005em}
 .plot svg{display:block;width:100%;height:100%;overflow:visible}
 .x{grid-column:2;position:relative;height:34px;font-size:11.5px;color:var(--muted)}
 .x span{position:absolute;top:7px;transform:translateX(-50%);white-space:nowrap;text-align:center;line-height:1.3}
+.x span.start{transform:none;text-align:left}
+.x span.end{transform:translateX(-100%);text-align:right}
 .x b{display:block;color:var(--bad);font-weight:650}
 .vals{position:absolute;inset:0;pointer-events:none}
 .vals .cap{position:absolute;height:5px;transform:translateX(-50%);background:var(--bad);border-radius:2px 2px 0 0}
@@ -432,6 +437,11 @@ footer{max-width:1120px;margin:0 auto;padding:20px 24px 28px;color:var(--muted);
   .overview{grid-template-columns:minmax(0,1fr)}
   .card{padding:16px 16px 12px}
   .chart{grid-template-rows:170px auto}
+  /* Lists with a long text column (log messages): the text gets its own full-width line under the other cells. */
+  .list table:has(td.wrap) thead{display:none}
+  .list table:has(td.wrap) tbody tr{display:flex;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--grid)}
+  .list table:has(td.wrap) td{border-bottom:0}
+  .list table:has(td.wrap) td.wrap{flex-basis:100%;min-width:0;max-width:none;padding-top:0}
   .big{font-size:38px}
   .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .stats dd{font-size:22px}
