@@ -1,5 +1,4 @@
-// Scheda utente (utente?id=N): profile, emails received, mail server rejections, push devices, notification counts.
-// Linked from every list that shows a user. Data only: views/pages/utente/ draws it.
+// Scheda utente (utente?id=N): profile, emails, rejections, push devices.
 import { num, pct } from '../helpers/format.js';
 import { runList, csvResponse, csvDate, sorted, PER_PAGE } from '../lists.js';
 import { CHANNEL, DEAD_STATE, REJECTION, NO_APPLE, KIND_LABEL, VIA_LABEL } from '../sql.js';
@@ -11,7 +10,7 @@ const PROFILE = `SELECT s.id, s.name, s.surname, s.email, s.notifications, ${CHA
   CASE WHEN s.email_inactive_at IS NOT NULL THEN ${DEAD_STATE} END AS stato_casella
   FROM subscribers s WHERE s.id = $1`;
 
-// Headings, sort keys and CSV text; the cells on the page: views/pages/utente/email-row.ejs, same order.
+// Cells: views/pages/utente/email-row.ejs, same order.
 const EMAIL_COLS = [
   { label: 'Inviata', key: 'inviata', sort: 'sent_at', initial: 'desc', desc1: true, text: (r) => csvDate(r.sent_at) },
   { label: 'Tipo', key: 'tipo', sort: 'kind', text: (r) => KIND_LABEL[r.kind] || r.kind },

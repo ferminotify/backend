@@ -1,7 +1,4 @@
-<%#
-  Plot box shared by the charts: y labels on the left, SVG (viewBox 0..100 both ways, stretched), x labels under it.
-  Locals: label, ticks, xLabels (helpers/charts.js), svg (view of the marks), overlay (view over the plot, or null).
-%>
+<%# Plot box: y labels, stretched SVG, x labels. svg/overlay: views to draw inside. %>
 <div class="chart" role="img" aria-label="<%= label %>">
   <div class="y" aria-hidden="true"><% for (const t of ticks) { %><span style="bottom:<%= t.bottom %>%"><%= t.label %></span><% } %></div>
   <div class="plot"><% if (overlay) { %><%- include(overlay) %><% } %>

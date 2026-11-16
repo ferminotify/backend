@@ -1,4 +1,4 @@
-// Formats for the admin pages (Italian, Rome time). Plain strings: the views escape them.
+// Italian formats, Rome time.
 export const TZ = 'Europe/Rome';
 
 const NUM = new Intl.NumberFormat('it-IT', { useGrouping: 'always' }); // Italian skips the dot in 4 digits
@@ -6,7 +6,7 @@ export const num = (n) => NUM.format(Number(n) || 0);
 export const pct = (x, digits = 0) =>
   x == null || !Number.isFinite(x) ? '–' : new Intl.NumberFormat('it-IT', { style: 'percent', maximumFractionDigits: digits }).format(x);
 
-/** 'YYYY-MM-DD' (a calendar day, no time zone) → "3 nov" / "lun 3". */
+/** 'YYYY-MM-DD' → "3 nov" / "lun 3". */
 const day = (iso, opts) => new Intl.DateTimeFormat('it-IT', { ...opts, timeZone: 'UTC' }).format(new Date(`${iso}T00:00:00Z`));
 export const dayMonth = (iso) => day(iso, { day: 'numeric', month: 'short' });
 export const weekday = (iso) => day(iso, { weekday: 'short', day: 'numeric' });
@@ -25,7 +25,6 @@ export function ago(d) {
   return REL.format(Math.round(min / 1440), 'day');
 }
 
-/** "Dati letti alle 14:05 del 16 novembre" in the footer. */
 export function readAt(now = new Date()) {
   const f = (opts) => new Intl.DateTimeFormat('it-IT', { ...opts, timeZone: TZ }).format(now);
   return `Dati letti alle ${f({ hour: '2-digit', minute: '2-digit' })} del ${f({ day: 'numeric', month: 'long' })}.`;

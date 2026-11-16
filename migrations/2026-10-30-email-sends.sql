@@ -1,4 +1,4 @@
--- Open tracking of the emails (docs/email-aperture.md): one row per tracked email, the id is
+-- Open tracking of the emails: one row per tracked email, the id is
 -- the token of its 1x1 image (GET /i/<id>.gif). Only the first open, and only a label of the
 -- app (via); no IP, no device. Kept 6 months (the notifier prunes it).
 -- Idempotent: safe to run more than once. Additive only.

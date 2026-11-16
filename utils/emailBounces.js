@@ -1,7 +1,7 @@
-// Dead mailboxes (docs/email-caselle-morte.md). The providers report rejections through webhooks
+// Dead mailboxes. The providers report rejections through webhooks
 // (routes/hooks.js); every rejection goes to email_bounces, and only a deleted mailbox
 // ("5.1.1", "user unknown"…) turns the email off: subscribers.email_inactive_at. The notifier
-// then sends one check after 3 days (notifier/src/db.py email_check_due): delivered → back on.
+// then sends one check after 3 days: delivered → back on.
 import crypto from 'crypto';
 import pool from '../db.js';
 import logger from './logger.js';

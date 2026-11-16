@@ -1,9 +1,4 @@
-<%#
-  A page of a list. Locals: cols, rows, total, page, perPage, ord, dir, emptyText?, row (view of one <tr>, gets r).
-  cols: [{ label, key?, sort?, initial?, num?, desc1? }]. Columns with `sort` have a clickable heading: ord/dir =
-  the current sort (lists.js sorted()); with none, the column with `initial` ('asc'|'desc') is the list's own order.
-  A click on the active column flips it; on another one sorts ascending, descending first for numbers and dates.
-%>
+<%# Page of a list. cols: [{ label, key?, sort?, initial?, num?, desc1? }], row: view of one <tr> (gets r). %>
 <% if (!total) { %>
 <%- include('empty', { text: locals.emptyText || 'Nessun risultato.' }) %>
 <% } else {

@@ -1,7 +1,5 @@
-// Open tracking (docs/email-aperture.md): GET /i/<id>.gif, the 1x1 image of a tracked email.
-// The first download sets email_sends.opened_at and a label of the app (via). The user agent
-// and the IP only pick the label: neither is stored nor logged. Always the GIF, whatever the id
-// (it must not tell which ids exist, and the image must never look broken in the email).
+// Open tracking: GET /i/<id>.gif, the 1x1 image of a tracked email.
+// first download sets email_sends.opened_at and a label of the app
 import express from 'express';
 import pool from '../db.js';
 import logger from '../utils/logger.js';
@@ -19,8 +17,7 @@ const appleIp = (ip) => /^(::ffff:)?17\.\d+\.\d+\.\d+$/i.test(String(ip || ''));
 
 /**
  * Which app downloaded the image: 'gmail' (Google's image proxy, at the first open),
- * 'apple' (Apple Mail Privacy Protection preloads every image, read or not: an approximation,
- * Apple does not document its ranges), 'altro'.
+ * 'apple' (Apple Mail Privacy Protection preloads every image: an approximation), 'altro'.
  */
 export function openedVia(userAgent, ip) {
   if (/GoogleImageProxy/i.test(String(userAgent || ''))) return 'gmail';

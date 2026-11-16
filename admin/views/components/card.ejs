@@ -1,8 +1,4 @@
-<%#
-  Panel. Locals: title, sub? (line under it), cls?, body (view of the content), data (that view's locals),
-  empty? (text shown instead of the body), region? (name: assets/admin.js swaps the body with ?part=<name>).
-  Pass every optional one you use: included views also see the caller's locals.
-%>
+<%# Panel. title, sub?, cls?, body + data, empty? (text instead of body), region? (?part name). Included views also see caller locals: pass every optional. %>
 <section class="card <%= locals.cls || '' %>">
   <header><h2><%= title %></h2><% if (locals.sub) { %><p><%= sub %></p><% } %></header>
   <% if (locals.empty) { %>

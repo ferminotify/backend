@@ -1,5 +1,4 @@
-// Log: cycles and errors of the notifier and of the backup notifier; the two logs as one list.
-// Data only: views/pages/log/ draws it.
+// Log: notifier and backup notifier cycles, errors, merged list.
 import { num, dayMonth, weekday, ago } from '../helpers/format.js';
 import { pick, text, like, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from '../lists.js';
 import { perDay, cycleLog, CYCLE_AGGS } from '../sql.js';
@@ -8,7 +7,7 @@ const GIORNI = [[1, '24 ore'], [7, '7 giorni'], [30, '30 giorni']];
 const SERVIZI = [['', 'Tutti'], ['notifier', 'Notifier'], ['riserva', 'Riserva']];
 const ESITI = [['', 'Tutti'], ['error', 'Errori'], ['success', 'Riusciti'], ['info', 'Info']];
 
-// Headings, sort keys and CSV text; the cells on the page: views/pages/log/row.ejs, same order.
+// Cells: views/pages/log/row.ejs, same order.
 const COLS = [
   { label: 'Quando', key: 'quando', sort: 'timestamp', initial: 'desc', desc1: true, text: (r) => csvDate(r.timestamp) },
   { label: 'Servizio', key: 'servizio', sort: 'servizio', text: (r) => r.servizio },
@@ -57,7 +56,7 @@ export async function log(db, req) {
          (SELECT count(*) FROM logs_notifier WHERE type = 'success' AND ${W})::int AS riusciti,
          (SELECT count(*) FROM logs_backup_notifier WHERE type = 'error' AND ${W})::int AS riserva`),
     q(perDay(chartDays, cycleLog(`now() - ${chartDays + 1} * interval '1 day'`), 'timestamp', CYCLE_AGGS)),
-    // Same error with different numbers or addresses = one kind: digits and emails replaced.
+    // Group errors ignoring numbers and emails.
     q(`SELECT servizio || ': ' || left(regexp_replace(regexp_replace(message, '\\S+@\\S+', '<email>', 'g'), '[0-9]+', 'N', 'g'), 90) AS label,
          count(*)::int AS n
        FROM (SELECT 'Notifier' AS servizio, message FROM logs_notifier WHERE type = 'error' AND ${W}
@@ -82,7 +81,7 @@ export async function log(db, req) {
       daily: {
         label: `Cicli del notifier per giorno, ultimi ${chartDays} giorni`, every: chartDays > 7 ? 7 : 1,
         series: [{ label: 'Senza errori', cls: 'c-gray' }, { label: 'Con errori', cls: 'c-bad' }],
-        // A cycle with errors usually still ends with its success row: split the successes, don't add to them.
+        // Error cycles also log a success: split, don't add.
         items: daily.map((r) => ({
           x: chartDays > 7 ? dayMonth(r.iso) : weekday(r.iso), parts: [Math.max(0, r.riusciti - r.con_errori), r.con_errori],
           sub: chartDays <= 7 && r.con_errori ? num(r.con_errori) : null,

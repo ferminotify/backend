@@ -1,5 +1,4 @@
-// Utenti: subscribers, channels, keywords, daily notification time, last logins; list of subscribers.
-// Data only: views/pages/utenti/ draws it.
+// Utenti: channels, keywords, notification time, logins; list of subscribers.
 import { dayMonth, num } from '../helpers/format.js';
 import { pick, text, like, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from '../lists.js';
 import { ACTIVE, CHANNEL, perPeriod } from '../sql.js';
@@ -41,8 +40,7 @@ function list(req) {
   };
 }
 
-// Headings and sort keys (only these SQL expressions reach ORDER BY) and the CSV text of each column.
-// The cells on the page: views/pages/utenti/row.ejs, same order.
+// Cells: views/pages/utenti/row.ejs, same order.
 const stato = (r) => (r.notifications < 0 ? 'Da confermare' : 'Attivo');
 const COLS = [
   { label: 'ID', key: 'id', sort: 'id', initial: 'desc', num: true, text: (r) => r.id },
@@ -57,7 +55,6 @@ const COLS = [
   { label: 'Moodle', key: 'moodle', sort: 'school_username IS NOT NULL', text: (r) => (r.moodle ? 'Sì' : 'No') },
 ];
 
-/** Locals of views/pages/utenti/list.ejs: filters + one page of subscribers. */
 const listLocals = (req, l, ls, page) => ({
   filters: [
     { name: 'q', label: 'Cerca', value: l.q, placeholder: 'Nome, email o keyword' },

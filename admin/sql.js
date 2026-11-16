@@ -1,10 +1,9 @@
-// SQL pieces shared by the admin pages. Tables unqualified: the admin pool's
-// search_path is public (routes/admin.js).
+// SQL shared by the admin pages.
 
 export const ACTIVE = 'notifications >= 0';
 export const CHANNEL = (p = '') => `CASE ${p}notification_preferences WHEN 3 THEN 'Email e Telegram' WHEN 2 THEN 'Solo email'
   WHEN 1 THEN 'Solo Telegram' ELSE 'Nessuno' END`;
-// Dead mailboxes (docs/email-caselle-morte.md §4.3): confirmed = a second "does not exist" on the check. Alias s.
+// Dead mailbox confirmed = second "does not exist" on the check. Alias s.
 export const DEAD_STATE = `CASE WHEN (SELECT count(*) FROM email_bounces b WHERE b.sub_id = s.id AND b.status = 'unknown_user'
   AND b.at >= s.email_inactive_at) >= 2 THEN 'Confermata' ELSE 'In verifica' END`;
 export const OTHER_CHANNEL = `CASE WHEN s.notification_preferences & 1 = 1 AND s.telegram IS NOT NULL THEN 'Telegram'
@@ -45,11 +44,7 @@ agg AS (SELECT date_trunc('${unit}', ${local})::date AS period, ${aggs.map(([nam
 SELECT to_char(periods.period, 'YYYY-MM-DD') AS iso, ${aggs.map(([name]) => `coalesce(${name}, 0)::int AS ${name}`).join(', ')}
 FROM periods LEFT JOIN agg USING (period) ORDER BY periods.period`;
 
-/**
- * Notifier log rows with the cycle they belong to, as a FROM item (alias l). A cycle ends with its 'success' row,
- * so a row's cycle = successes before it. Errors are counted per cycle: one failing push logs one row per device
- * and event, every cycle.
- */
+/** Notifier log rows with their cycle (= successes before them), FROM item alias l. */
 export const cycleLog = (since) => `(SELECT timestamp, type,
   count(*) FILTER (WHERE type = 'success') OVER (ORDER BY timestamp ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS cycle
   FROM logs_notifier WHERE timestamp >= ${since}) l`;

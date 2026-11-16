@@ -1,5 +1,4 @@
-// Email: open rates (docs/email-aperture.md), dead mailboxes (docs/email-caselle-morte.md); lists of sent emails,
-// dead mailboxes and addresses that never open. Data only: views/pages/email/ draws it.
+// Email: open rates, dead mailboxes; lists of sent, dead and never opened.
 import { num, pct, dayMonth, weekday } from '../helpers/format.js';
 import { pick, text, like, link, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from '../lists.js';
 import { DEAD_STATE, OTHER_CHANNEL, REJECTION, NO_APPLE, KIND_LABEL, VIA_LABEL, buckets, fillBuckets, perDay, perPeriod } from '../sql.js';
@@ -15,12 +14,12 @@ const RATE = buckets('r', [['= 0', '0%'], ['<= 0.25', '1-25%'], ['<= 0.5', '26-5
 function filtersOf(req) {
   const giorni = pick(req.query.giorni, GIORNI.map(([v]) => v), 30);
   const tipo = pick(req.query.tipo, TIPI.map(([v]) => v), '');
-  // Inline: both come from the lists above. p = table alias prefix.
+  // Safe inline: both from the lists above. p = alias prefix.
   const W = (p = '') => `${p}sent_at >= now() - ${giorni} * interval '1 day'${tipo ? ` AND ${p}kind = '${tipo}'` : ''}`;
   return { giorni, tipo, W };
 }
 
-// The three lists. cols: headings, sort keys and CSV text; the cells on the page: views/pages/email/row-<elenco>.ejs.
+// Cells: views/pages/email/row-<elenco>.ejs, same order as cols.
 function list(req, { W }) {
   const elenco = pick(req.query.elenco, ELENCHI.map(([v]) => v), 'inviate');
   const q = text(req.query.q);
@@ -40,7 +39,7 @@ function list(req, { W }) {
     ] };
   }
   if (elenco === 'mai-aperte') {
-    // Hints only: active mailbox, at least 5 emails in 60 days, none opened, no rejection.
+    // Hint: 5+ emails in 60 days, none opened, no rejection.
     return { elenco, q, sql: {
       select: `s.id, s.email, count(*)::int AS ricevute, EXISTS (SELECT 1 FROM unnest(s.tags) t WHERE t ~ '^5[A-Z]')
         AND NOT EXISTS (SELECT 1 FROM unnest(s.tags) t WHERE t ~ '^[1-4][A-Z]') AS solo_quinte`,
