@@ -176,3 +176,34 @@ VALUES
     ('Test', 'User', 'test@example.com',
      '$2a$10$KX5C7cT8OYoXGsR.8WSYd.49/wRHJTe5ZPDqJP1BYEnlAB/ddeLEi',
      0, 'Xtest01', 'M', 2, FALSE);
+
+-- ── admin_ro: read-only login for the admin pages (routes/admin.js) ───────────
+-- Same grants as production (checked 2026-11-16): SELECT only, column by column, on the tables the
+-- pages read; no password hashes, codes, tokens or push keys.
+-- Dev password: "test" (docker-compose.dev.yml, ADMIN_DB_PASSWORD).
+
+DO $$
+DECLARE t record;
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin_ro') THEN
+        CREATE ROLE admin_ro LOGIN PASSWORD 'test';
+    END IF;
+    EXECUTE format('GRANT CONNECT ON DATABASE %I TO admin_ro', current_database());
+    GRANT USAGE ON SCHEMA public TO admin_ro;
+    FOR t IN
+        SELECT table_name, string_agg(quote_ident(column_name), ', ') AS cols
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name IN ('classes', 'email_bounces', 'email_sends', 'logs_backup_notifier',
+                              'logs_notifier', 'push', 'push_sent', 'sent', 'subscribers')
+           AND (table_name, column_name) NOT IN (
+                ('subscribers', 'password'), ('subscribers', 'secret_temp'),
+                ('subscribers', 'secret_temp_timestamp'), ('subscribers', 'unsub_token'),
+                ('subscribers', 'school_ticket'), ('subscribers', 'google_id'),
+                ('subscribers', 'temp_sent'),
+                ('push', 'endpoint'), ('push', 'p256dh'), ('push', 'auth'), ('push', 'device_id'))
+         GROUP BY table_name
+    LOOP
+        EXECUTE format('GRANT SELECT (%s) ON public.%I TO admin_ro', t.cols, t.table_name);
+    END LOOP;
+END $$;

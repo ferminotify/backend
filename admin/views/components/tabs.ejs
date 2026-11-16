@@ -1,0 +1,2 @@
+<%# Links that switch a view of the page. tabs: [{ href, label, active }] %>
+<nav class="tabs" aria-label="Elenchi"><% for (const t of tabs) { %><a href="<%= t.href %>"<% if (t.active) { %> aria-current="true"<% } %>><%= t.label %></a><% } %></nav>

@@ -1,0 +1,5 @@
+<%# Tabs, search and one page of the chosen list (also served alone for ?part=list). Locals: tabs, filters, keep, elenco, list %>
+<%- include('/components/tabs', { tabs }) %>
+<%- include('/components/filters', { fields: filters, keep }) %>
+<% if (elenco === 'mai-aperte') { %><p class="note" style="margin:-4px 0 10px">Almeno 5 email in 60 giorni, nessuna aperta, nessun rifiuto.</p><% } %>
+<%- include('/components/list', list) %>

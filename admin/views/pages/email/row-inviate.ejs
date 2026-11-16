@@ -1,0 +1,9 @@
+<%# One sent email; same columns as list() 'inviate' in data/email.js. Locals: r, kinds, vias %>
+<tr>
+  <td><%= h.dateTime(new Date(r.sent_at)) %></td>
+  <td><a class="user" href="utente?id=<%= r.sub_id %>"><%= r.utente %></a></td>
+  <td><%= r.email %></td>
+  <td><%= kinds[r.kind] || r.kind %></td>
+  <td><% if (r.opened_at) { %><%= h.dateTime(new Date(r.opened_at)) %><% } else { %><span class="muted">No</span><% } %></td>
+  <td><%= vias[r.via] || '–' %></td>
+</tr>

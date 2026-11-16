@@ -1,0 +1,27 @@
+<%# Email. Locals: data/email.js %>
+<%- include('/components/filters', period) %>
+<%- include('/components/stats', { items: summary }) %>
+<p class="note" style="margin:-8px 0 16px">! Su Apple Mail non funziona pixel tracciamento. Sono mostrati dati senza Apple Mail.</p>
+<div class="stack">
+  <%- include('/components/card', { title: 'Per giorno', body: '/charts/columns', data: h.columns(perDay), empty: !sentAny && 'Nessuna email nel periodo.' }) %>
+</div>
+<div class="grid3 stack">
+  <%- include('/components/card', { title: 'Per tipo', body: '/charts/h-bars', empty: !perKind.length && 'Nessuna email.',
+    data: h.hBars({ rows: perKind, label: 'Tasso di apertura per tipo', fmt: (v) => h.pct(v, 1) }) }) %>
+  <%- include('/components/card', { title: 'Aperte dopo', body: '/charts/h-bars', empty: !delay.any && 'Nessuna apertura.',
+    data: h.hBars({ rows: delay.rows, label: 'Tempo tra invio e prima apertura' }) }) %>
+  <%- include('/components/card', { title: 'Iscritti per tasso di apertura', body: '/charts/h-bars', empty: !perUser.any && 'Nessun dato.',
+    data: h.hBars({ rows: perUser.rows, label: 'Iscritti per tasso di apertura' }) }) %>
+</div>
+<div class="grid2 stack">
+  <%- include('/components/card', { title: 'Ora di apertura', body: '/charts/columns', data: h.columns(hours.chart), empty: !hours.any && 'Nessuna apertura.' }) %>
+  <%- include('/components/card', { title: 'Caselle morte per mese', body: '/charts/columns', data: h.columns(deadMonths.chart),
+    empty: !deadMonths.any && 'Nessuna casella disattivata negli ultimi 12 mesi.' }) %>
+</div>
+<div class="grid2 stack">
+  <%- include('/components/card', { title: 'Rifiuti dei server di posta', body: '/charts/h-bars', empty: !rejections.length && 'Nessun rifiuto nel periodo.',
+    data: h.hBars({ rows: rejections, label: 'Rifiuti per tipo nel periodo', cls: 'c-bad' }) }) %>
+  <%- include('/components/card', { title: 'Caselle morte: altri canali', body: '/charts/h-bars', empty: !reach.length && 'Nessuna casella morta.',
+    data: h.hBars({ rows: reach, label: 'Utenti con casella morta per canale ancora attivo' }) }) %>
+</div>
+<%- include('/components/card', { title: 'Elenchi', body: '/pages/email/list', region: 'list', data: locals }) %>

@@ -1,0 +1,17 @@
+<%# Profile facts. Locals: u (data/utente.js PROFILE row), daily %>
+<% const yes = (v) => (v ? 'Sì' : 'No'); %>
+<dl class="facts">
+  <dt>Canali</dt><dd><%= u.canali %></dd>
+  <dt>Telegram</dt><dd><%= yes(u.telegram) %></dd>
+  <dt>Keyword</dt><dd><%= u.keyword || '–' %></dd>
+  <dt>Keyword simili</dt><dd><%= yes(u.include_similar_tags) %></dd>
+  <dt>Attività facoltative</dt><dd><%= u.optin || '–' %></dd>
+  <dt>Notifica giornaliera</dt><dd><%= daily %></dd>
+  <dt>Ultimo accesso</dt><dd><%= u.last_login ? h.dateTime(new Date(u.last_login)) : '–' %></dd>
+  <dt>Profilo completo</dt><dd><%= yes(u.profile_complete) %></dd>
+  <dt>Moodle</dt><dd><%= u.school_username || '–' %></dd>
+  <% if (u.email_inactive_at) { %>
+  <dt>Casella eliminata dal</dt><dd><%= h.dateTime(new Date(u.email_inactive_at)) %></dd>
+  <dt>Motivo</dt><dd><%= u.email_inactive_reason || '–' %></dd>
+  <% } %>
+</dl>

@@ -1,0 +1,13 @@
+<%# One subscriber in the list; same columns as COLS in data/utenti.js. Locals: r %>
+<tr>
+  <td class="num"><%= r.id %></td>
+  <td><a class="user" href="utente?id=<%= r.id %>"><%= r.name %> <%= r.surname %></a></td>
+  <td><%= r.email %><% if (r.email_inactive_at) { %> <span class="badge bad">eliminata</span><% } %></td>
+  <td><% if (r.notifications < 0) { %><span class="badge warn">Da confermare</span><% } else { %><span class="badge ok">Attivo</span><% } %></td>
+  <td><%= r.canali %></td>
+  <td class="wrap"><%= r.keyword %></td>
+  <td class="num"><%= h.num(Math.max(0, r.notifications)) %></td>
+  <td><%= r.giornaliera || '–' %></td>
+  <td><%= r.last_login ? h.dateTime(new Date(r.last_login)) : '–' %></td>
+  <td><%= r.moodle ? 'Sì' : 'No' %></td>
+</tr>

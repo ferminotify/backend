@@ -1,0 +1,7 @@
+<%# One email received; same columns as EMAIL_COLS in data/utente.js. Locals: r, kinds, vias %>
+<tr>
+  <td><%= h.dateTime(new Date(r.sent_at)) %></td>
+  <td><%= kinds[r.kind] || r.kind %></td>
+  <td><% if (r.opened_at) { %><%= h.dateTime(new Date(r.opened_at)) %><% } else { %><span class="muted">No</span><% } %></td>
+  <td><%= vias[r.via] || '–' %></td>
+</tr>

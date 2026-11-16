@@ -1,0 +1,7 @@
+<% for (const l of lines) { %>
+<g class="<%= l.cls %>">
+  <% for (const points of l.segments) { %><polyline class="line" points="<%= points %>"/><% } %>
+  <% for (const d of l.dots) { %><path class="dot" d="M<%= d.x %> <%= d.y %>h0"/><% } %>
+</g>
+<% } %>
+<% for (const hit of hits) { %><rect class="hit" x="<%= hit.x %>" y="0" width="<%= hit.w %>" height="100"><title><%= hit.title %></title></rect><% } %>

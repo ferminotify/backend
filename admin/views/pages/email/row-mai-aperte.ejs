@@ -1,0 +1,7 @@
+<%# One address that never opens; same columns as list() 'mai-aperte' in data/email.js. Locals: r %>
+<tr>
+  <td><a class="user" href="utente?id=<%= r.id %>"><%= r.email %></a></td>
+  <td class="num"><%= h.num(r.ricevute) %></td>
+  <td><% if (r.solo_quinte) { %><span class="badge warn">Sì</span><% } else { %>No<% } %></td>
+  <td class="num"><%= r.id %></td>
+</tr>
