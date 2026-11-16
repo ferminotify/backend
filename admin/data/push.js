@@ -1,16 +1,15 @@
-// Push: devices registered for web push, by week, system and browser; list of devices.
-// Data only: views/pages/push/ draws it.
+// Push: devices by week, system, browser; list of devices.
 import { num, dayMonth } from '../helpers/format.js';
 import { pick, text, like, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from '../lists.js';
 import { perPeriod } from '../sql.js';
 
 const OS = `CASE WHEN device_info ~* 'ios|iphone|ipad' THEN 'iOS' WHEN device_info ~* 'android' THEN 'Android'
   WHEN device_info ~* 'windows' THEN 'Windows' WHEN device_info ~* 'mac' THEN 'macOS' WHEN device_info ~* 'linux' THEN 'Linux' ELSE 'Altro' END`;
-// device_info is "model · system version · browser" (frontend stores/push.js); users can rename it.
+// device_info: "model · system · browser", renamable by users.
 const BROWSER = `CASE WHEN device_info LIKE '%·%' THEN trim(regexp_replace(device_info, '^.*·', '')) ELSE 'Rinominato' END`;
 const CON = [['', 'Tutti'], ['si', 'Sì'], ['no', 'No']];
 
-// Headings, sort keys and CSV text; the cells on the page: views/pages/push/row.ejs, same order.
+// Cells: views/pages/push/row.ejs, same order.
 const COLS = [
   { label: 'Registrato', key: 'registrato', sort: 'p.created_at', initial: 'desc', desc1: true, text: (r) => csvDate(r.created_at) },
   { label: 'Utente', key: 'utente', sort: 'lower(s.email)', text: (r) => r.email },

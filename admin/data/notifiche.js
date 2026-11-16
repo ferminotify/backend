@@ -1,12 +1,10 @@
-// Notifiche: totals and distributions of the notifications sent (table `sent` has no date, so no time charts).
-// Data only: views/pages/notifiche/ draws it.
+// Notifiche: totals and distributions (`sent` has no date).
 import { num } from '../helpers/format.js';
 import { ACTIVE, buckets, fillBuckets } from '../sql.js';
 
 const RECV = buckets('notifications', [['= 0', '0'], ['<= 10', '1-10'], ['<= 50', '11-50'], ['<= 100', '51-100'], ['<= 200', '101-200'], ['', 'Oltre 200']]);
 const DEST = buckets('n', [['= 1', '1'], ['<= 5', '2-5'], ['<= 20', '6-20'], ['<= 50', '21-50'], ['', 'Oltre 50']]);
 
-/** Locals of a columns chart over buckets, empty = all zero. */
 const histogram = (b, rows, label, x) => {
   const filled = fillBuckets(b, rows);
   return {

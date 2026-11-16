@@ -1,10 +1,9 @@
-// Panoramica: notifier health, subscribers and their channels, email open rate over 30 days, notifier cycles
-// over 7 days. Data only: views/pages/panoramica/ draws it.
+// Panoramica: notifier health, subscribers, channels, email opens, notifier cycles.
 import { num, pct, dayMonth, weekday, dateTime, ago } from '../helpers/format.js';
 import { perDay, cycleLog, CYCLE_AGGS } from '../sql.js';
 
 const ACTIVE = 'notifications >= 0';
-// The notifier sleeps 5 minutes after each cycle (notifier/main.py): no successful cycle for this long = stopped.
+// No successful cycle for this long = notifier stopped (it sleeps 5 min per cycle).
 const STALE_MIN = 20;
 
 const SUMMARY = `
@@ -18,8 +17,7 @@ SELECT count(*) FILTER (WHERE ${ACTIVE})::int AS attivi,
   (SELECT max(timestamp) FROM logs_notifier WHERE type = 'success') AS ultimo_ciclo
 FROM subscribers`;
 
-// Notification emails by kind, without Apple Mail: it downloads the image on delivery (privacy protection), so
-// its "opens" are not readings.
+// Without Apple Mail: it loads the pixel on delivery, not on reading.
 const KINDS = [['daily', 'Giornaliera', 'c-data'], ['lastminute', 'Last minute', 'c-data2']];
 const NO_APPLE = "via IS DISTINCT FROM 'apple'";
 const OPENS = perDay(30, 'email_sends', 'sent_at', KINDS.flatMap(([k]) => [
@@ -28,7 +26,6 @@ const OPENS = perDay(30, 'email_sends', 'sent_at', KINDS.flatMap(([k]) => [
 ]));
 const CYCLES = perDay(7, cycleLog("now() - interval '8 days'"), 'timestamp', CYCLE_AGGS);
 
-/** Notifier state from its last successful cycle and the errors of the last 24 hours. */
 function health(last, errors) {
   const stale = !last || Date.now() - last.getTime() > STALE_MIN * 60000;
   const [cls, state] = stale ? ['bad', 'Notifier fermo'] : errors ? ['warn', 'Notifier attivo, con errori'] : ['ok', 'Notifier attivo'];

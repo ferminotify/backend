@@ -18,7 +18,7 @@ router.post('/notification-preferences', async (req, res) => {
     if (option < 0 || option > 3) return res.status(400).json({ message: 'Invalid notification preferences option.' });
     try {
         // Email turned back on (or emailWorks): the user says the mailbox works, the dead-mailbox
-        // mark goes (docs/email-caselle-morte.md; if it bounces again it is set again).
+        // mark goes (if it bounces again it is set again).
         await pool.query(
             `UPDATE subscribers SET notification_preferences = $1::int,
                     email_inactive_at = CASE WHEN $1::int & 2 = 2 AND ($3::boolean OR notification_preferences & 2 = 0) THEN NULL ELSE email_inactive_at END,

@@ -1,4 +1,4 @@
-// Admin pages: statistics rendered as HTML on the server, no client JavaScript.
+// Admin pages, rendered on the server (admin/data + admin/views).
 //
 // Env (the pages are a 404 without these three):
 //   ADMIN_PASSWORD                    basic auth, user "admin"
@@ -97,11 +97,10 @@ router.get('/assets/montserrat.woff2', (req, res) => {
   res.sendFile(path.join(ASSETS, 'montserrat.woff2'));
 });
 
-// href (relative to the admin root) -> page builder (admin/data/): async (db, req) =>
-//   { view, locals, title?, active?, status? } (admin/views/<view>.ejs) | { csv: { filename, body } }
+// href → page: { view, locals, title?, active?, status? } | { csv }
 const PAGES = { './': panoramica, utenti, email, notifiche, push, log: logPage };
 const READY = Object.keys(PAGES);
-// Pages outside the menu (out.active names the menu entry to highlight).
+// Pages outside the menu.
 const HIDDEN = { utente };
 
 function page(href) {

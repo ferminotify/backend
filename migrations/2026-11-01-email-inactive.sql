@@ -1,4 +1,4 @@
--- Dead mailboxes (docs/email-caselle-morte.md): the providers' rejections, and the mailboxes
+-- Dead mailboxes: the providers' rejections, and the mailboxes
 -- that no longer exist, to stop emailing them (Telegram and push go on).
 -- Idempotent: safe to run more than once. Additive only. Needs 2026-10-30-email-sends.sql.
 BEGIN;

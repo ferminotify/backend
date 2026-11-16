@@ -1,6 +1,4 @@
-// Lists on the admin pages: query string parsing, paged queries, CSV export.
-// A list is { select, from, order, params }: data = SELECT select from ORDER BY order LIMIT/OFFSET,
-// total = count(*) of the same rows. Filters go into `from` (WHERE/HAVING) with $n params only.
+// Admin lists: query parsing, paging, CSV. List = { select, from, order, params }; filters as $n params.
 
 export const PER_PAGE = 50;
 
@@ -41,11 +39,7 @@ export function link(req, changes) {
   return s ? `?${s}` : '?';
 }
 
-/**
- * The list sorted by the column the user clicked (?ord=key&dir=asc|desc), its own order after that.
- * cols: [{ key, sort: 'SQL expression' }]; only these expressions reach the SQL, never the query string.
- * Returns the list plus { ord, dir } (empty when the list keeps its own order).
- */
+/** Sort by ?ord&dir using only the cols' own SQL (never the query string). Adds { ord, dir }. */
 export function sorted(req, list, cols) {
   const col = cols.find((c) => c.sort && c.key === req.query.ord);
   if (!col) return { ...list, ord: '', dir: '' };
@@ -66,7 +60,7 @@ export async function runList(db, req, { select, from, order, params = [] }) {
   return { rows, total: count.n, page };
 }
 
-/** Whole list as CSV (Excel-friendly: BOM, semicolons). cols: [{ label, text: (row) => string }] */
+/** Whole list as CSV (BOM, semicolons, for Excel). */
 export async function listCsv(db, { select, from, order, params = [] }, cols) {
   const { rows } = await db.query(`SELECT ${select} ${from} ORDER BY ${order} LIMIT ${CSV_MAX}`, params);
   const cell = (v) => {
@@ -77,7 +71,7 @@ export async function listCsv(db, { select, from, order, params = [] }, cols) {
   return `﻿${lines.join('\r\n')}\r\n`;
 }
 
-/** Response for ?format=csv: { csv: { filename, body } } (routes/admin.js sends it as a download). */
+/** Response for ?format=csv. */
 export async function csvResponse(db, list, cols, name) {
   const day = new Date().toISOString().slice(0, 10);
   return { csv: { filename: `fermi-notify-${name}-${day}.csv`, body: await listCsv(db, list, cols) } };

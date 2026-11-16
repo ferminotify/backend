@@ -1,7 +1,5 @@
-// Gestionale: filters, pages, sorting and tabs without reloading the page.
-// The server renders the same HTML in pieces: ?part=list = one list (only its queries), ?part=main = the page
-// content. This script fetches the piece of the region the control sits in ([data-region]) and swaps it in,
-// keeping the URL in sync. Without it every control still works as a normal link or form.
+// Filters, paging, sorting, tabs without reload: fetches ?part=<data-region> and swaps it in.
+// Without JS every control works as a normal link or form.
 (() => {
   const busy = new WeakMap(); // region -> AbortController of its request in flight
 

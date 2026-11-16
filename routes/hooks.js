@@ -1,4 +1,4 @@
-// Delivery reports from the email providers (docs/email-caselle-morte.md):
+// Delivery reports from the email providers:
 //
 // POST /hooks/email/azure?key=…   Azure Event Grid, Microsoft.Communication.EmailDeliveryReportReceived
 //                                 (the school addresses and the service emails). AZURE_EVENTGRID_KEY.
