@@ -44,3 +44,14 @@ agg AS (SELECT date_trunc('${unit}', ${local})::date AS period, ${aggs.map(([nam
   FROM ${table} WHERE ${local} >= (SELECT d FROM cur) - ${count - 1} * interval '1 ${unit}' AND (${where}) GROUP BY 1)
 SELECT to_char(periods.period, 'YYYY-MM-DD') AS iso, ${aggs.map(([name]) => `coalesce(${name}, 0)::int AS ${name}`).join(', ')}
 FROM periods LEFT JOIN agg USING (period) ORDER BY periods.period`;
+
+/**
+ * Notifier log rows with the cycle they belong to, as a FROM item (alias l). A cycle ends with its 'success' row,
+ * so a row's cycle = successes before it. Errors are counted per cycle: one failing push logs one row per device
+ * and event, every cycle.
+ */
+export const cycleLog = (since) => `(SELECT timestamp, type,
+  count(*) FILTER (WHERE type = 'success') OVER (ORDER BY timestamp ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS cycle
+  FROM logs_notifier WHERE timestamp >= ${since}) l`;
+export const CYCLE_AGGS = [['riusciti', "count(*) FILTER (WHERE type = 'success')"],
+  ['con_errori', "count(DISTINCT cycle) FILTER (WHERE type = 'error')"]];

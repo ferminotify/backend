@@ -2,6 +2,7 @@
 // over 7 days. Queries from staging/metabase/pages.mjs; tables unqualified (search_path = ADMIN_DB_SCHEMA,
 // routes/admin.js).
 import { html, card, empty, rateLines, countBars, dataTable, num, pct, dayMonth, weekday, dateTime, ago } from './ui.js';
+import { perDay, cycleLog, CYCLE_AGGS } from './sql.js';
 
 const ACTIVE = 'notifications >= 0';
 // The notifier sleeps 5 minutes after each cycle (notifier/main.py): no successful cycle for this long = stopped.
@@ -14,18 +15,9 @@ SELECT count(*) FILTER (WHERE ${ACTIVE})::int AS attivi,
   count(*) FILTER (WHERE ${ACTIVE} AND notification_preferences & 1 = 1 AND telegram IS NOT NULL)::int AS telegram,
   (SELECT count(DISTINCT sub_id) FROM push WHERE send_push_with_notifications)::int AS push,
   count(*) FILTER (WHERE email_inactive_at IS NOT NULL)::int AS caselle_morte,
-  (SELECT count(*) FROM logs_notifier WHERE type = 'error' AND timestamp >= now() - interval '24 hours')::int AS errori_24h,
+  (SELECT count(DISTINCT cycle) FILTER (WHERE type = 'error') FROM ${cycleLog("now() - interval '24 hours'")})::int AS errori_24h,
   (SELECT max(timestamp) FROM logs_notifier WHERE type = 'success') AS ultimo_ciclo
 FROM subscribers`;
-
-/** One row per Rome calendar day, the last `days` up to today, zeros where nothing happened. */
-const perDay = (days, table, col, aggs) => `
-WITH today AS (SELECT (now() AT TIME ZONE 'Europe/Rome')::date AS d),
-days AS (SELECT (SELECT d FROM today) - g AS day FROM generate_series(0, ${days - 1}) g),
-agg AS (SELECT (${col} AT TIME ZONE 'Europe/Rome')::date AS day, ${aggs.map(([name, expr]) => `${expr} AS ${name}`).join(', ')}
-  FROM ${table} WHERE ${col} >= ((SELECT d FROM today) - ${days - 1})::timestamp AT TIME ZONE 'Europe/Rome' GROUP BY 1)
-SELECT to_char(days.day, 'YYYY-MM-DD') AS iso, ${aggs.map(([name]) => `coalesce(${name}, 0)::int AS ${name}`).join(', ')}
-FROM days LEFT JOIN agg USING (day) ORDER BY days.day`;
 
 // Notification emails by kind, without Apple Mail: it downloads the image on delivery (privacy protection), so
 // its "opens" are not readings. Same rule as "Tasso senza Apple" in metabase/pages.mjs.
@@ -35,8 +27,7 @@ const OPENS = perDay(30, 'email_sends', 'sent_at', KINDS.flatMap(([k]) => [
   [`${k}_inviate`, `count(*) FILTER (WHERE kind = '${k}' AND ${NO_APPLE})`],
   [`${k}_aperte`, `count(opened_at) FILTER (WHERE kind = '${k}' AND ${NO_APPLE})`],
 ]));
-const CYCLES = perDay(7, 'logs_notifier', 'timestamp',
-  [['riusciti', "count(*) FILTER (WHERE type = 'success')"], ['errori', "count(*) FILTER (WHERE type = 'error')"]]);
+const CYCLES = perDay(7, cycleLog("now() - interval '8 days'"), 'timestamp', CYCLE_AGGS);
 
 /** Notifier state from its last successful cycle and the errors of the last 24 hours. */
 function health(last, errors) {
@@ -45,7 +36,7 @@ function health(last, errors) {
   return html`<section class="health ${cls}" aria-label="Stato del notifier">
   <strong>${state}</strong>
   <span>Ultimo ciclo riuscito: ${last ? html`<b>${ago(last)}</b> (${dateTime(last)})` : html`<b>nessuno</b>`}</span>
-  <span>Errori nelle ultime 24 ore: <b>${num(errors)}</b></span>
+  <span>Cicli con errori nelle ultime 24 ore: <b>${num(errors)}</b></span>
 </section>`;
 }
 
@@ -97,22 +88,22 @@ export async function panoramica(db) {
       : empty('Nessuna email giornaliera o last minute inviata negli ultimi 30 giorni.'),
   });
 
-  const total = cycles.reduce((a, r) => a + r.riusciti + r.errori, 0);
-  const errors = cycles.reduce((a, r) => a + r.errori, 0);
+  const total = cycles.reduce((a, r) => a + r.riusciti, 0);
+  const errors = cycles.reduce((a, r) => a + r.con_errori, 0);
   const notifier = card({
     title: 'Cicli del notifier, 7 giorni',
-    sub: total ? (errors ? `${num(errors)} ${errors === 1 ? 'errore' : 'errori'} nella settimana` : 'Nessun errore nella settimana') : null,
-    body: total
+    sub: total ? (errors ? `${num(errors)} ${errors === 1 ? 'ciclo' : 'cicli'} con errori nella settimana` : 'Nessun errore nella settimana') : null,
+    body: total || errors
       ? html`${countBars({
-        legendLabel: 'Cicli riusciti',
-        label: `Cicli riusciti del notifier negli ultimi 7 giorni, ${num(errors)} errori`,
+        legendLabel: 'Cicli riusciti', flagLabel: 'Cicli con errori',
+        label: `Cicli riusciti del notifier negli ultimi 7 giorni, ${num(errors)} con errori`,
         bars: cycles.map((r) => ({
           iso: r.iso, value: r.riusciti,
-          title: `${weekday(r.iso)}: ${num(r.riusciti)} riusciti, ${num(r.errori)} errori`,
-          flag: r.errori ? `${num(r.errori)} ${r.errori === 1 ? 'errore' : 'errori'}` : null,
+          title: `${weekday(r.iso)}: ${num(r.riusciti)} riusciti, ${num(r.con_errori)} con errori`,
+          flag: r.con_errori ? num(r.con_errori) : null,
         })),
       })}
-      ${dataTable(['Giorno', 'Riusciti', 'Errori'], cycles.map((r) => [weekday(r.iso), num(r.riusciti), num(r.errori)]).reverse())}`
+      ${dataTable(['Giorno', 'Riusciti', 'Con errori'], cycles.map((r) => [weekday(r.iso), num(r.riusciti), num(r.con_errori)]).reverse())}`
       : empty('Nessun ciclo registrato negli ultimi 7 giorni.'),
   });
 
