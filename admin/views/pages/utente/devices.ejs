@@ -1,0 +1,7 @@
+<%# Push devices of the user. Locals: devices %>
+<div class="list"><table><thead><tr><th>Registrato</th><th>Dispositivo</th><th>Notifiche</th></tr></thead><tbody>
+<% for (const d of devices) { %>
+  <tr><td><%= d.created_at ? h.dateTime(new Date(d.created_at)) : '–' %></td><td class="wrap"><%= d.device_info %></td>
+    <td><% if (d.send_push_with_notifications) { %><span class="badge ok">Sì</span><% } else { %><span class="badge">No</span><% } %></td></tr>
+<% } %>
+</tbody></table></div>

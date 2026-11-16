@@ -1,0 +1,3 @@
+<%# Columns of counts, stacked. Locals: h.columns() %>
+<% if (legend.length) { %><%- include('legend') %><% } %>
+<%- include('frame', { svg: 'columns-svg', overlay: totals ? 'columns-totals' : null }) %>

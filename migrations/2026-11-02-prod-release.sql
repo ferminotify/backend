@@ -10,7 +10,7 @@
 --   2026-10-28-school-ticket.sql
 --   2026-10-30-email-sends.sql
 --   2026-11-01-email-inactive.sql
--- Then, separately (needs the password): psql -v pw="$MB_RO_PASSWORD" -f staging/metabase/grants.sql
+-- Then grant SELECT on the new table and columns to admin_ro (as in docker/db_init.sql), for the admin pages.
 --
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/2026-11-02-prod-release.sql
 BEGIN;

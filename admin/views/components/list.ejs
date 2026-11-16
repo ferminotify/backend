@@ -1,0 +1,38 @@
+<%#
+  A page of a list. Locals: cols, rows, total, page, perPage, ord, dir, emptyText?, row (view of one <tr>, gets r).
+  cols: [{ label, key?, sort?, initial?, num?, desc1? }]. Columns with `sort` have a clickable heading: ord/dir =
+  the current sort (lists.js sorted()); with none, the column with `initial` ('asc'|'desc') is the list's own order.
+  A click on the active column flips it; on another one sorts ascending, descending first for numbers and dates.
+%>
+<% if (!total) { %>
+<%- include('empty', { text: locals.emptyText || 'Nessun risultato.' }) %>
+<% } else {
+  const from = (page - 1) * perPage + 1;
+  const to = Math.min(total, page * perPage);
+%>
+<div class="list"><table>
+  <thead><tr>
+  <% for (const c of cols) {
+    if (!c.sort) { %>
+    <th scope="col"<% if (c.num) { %> class="num"<% } %>><%= c.label %></th>
+    <% continue; }
+    const st = ord ? (c.key === ord ? dir : '') : c.initial || '';
+    const next = st ? (st === 'asc' ? 'desc' : 'asc') : (c.num || c.desc1 ? 'desc' : 'asc');
+  %>
+    <th scope="col" aria-sort="<%= st === 'asc' ? 'ascending' : st === 'desc' ? 'descending' : 'none' %>"<% if (c.num) { %> class="num"<% } %>><a class="sort<%= st ? ` ${st}` : '' %>" href="<%= h.link({ ord: c.key, dir: next, p: '' }) %>"
+      title="Ordina per <%= c.label.toLowerCase() %>"><%= c.label %><i aria-hidden="true"></i></a></th>
+  <% } %>
+  </tr></thead>
+  <tbody>
+  <% for (const r of rows) { %><%- include(row, { r }) %><% } %>
+  </tbody>
+</table></div>
+<div class="pager">
+  <span><%= h.num(from) %>-<%= h.num(to) %> di <%= h.num(total) %></span>
+  <span class="links">
+    <% if (page > 1) { %><a href="<%= h.link({ p: page - 1 }) %>">Precedenti</a><% } %>
+    <% if (to < total) { %><a href="<%= h.link({ p: page + 1 }) %>">Successivi</a><% } %>
+    <a href="<%= h.link({ format: 'csv', p: '' }) %>">Scarica CSV</a>
+  </span>
+</div>
+<% } %>

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
+<title><%= title %> · Admin Fermi Notify</title>
+<link rel="preload" href="assets/montserrat.woff2" as="font" type="font/woff2" crossorigin>
+<style><%- h.CSS %></style>
+<script src="assets/admin.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="./" aria-label="Fermi Notify"><%- h.LOGO %><span>Admin</span></a>
+  <nav aria-label="Sezioni">
+  <% for (const [href, name] of h.MENU) { %>
+    <% if (ready.includes(href)) { %>
+    <a href="<%= href %>"<% if (href === active) { %> aria-current="page"<% } %>><%= name %></a>
+    <% } else { %>
+    <span class="soon" aria-disabled="true" title="In arrivo"><%= name %></span>
+    <% } %>
+  <% } %>
+  </nav>
+</header>
+<main>
+<h1><%= title %></h1>
+<div data-region="main"><%- include(pageView) %></div>
+</main>
+<footer><%= h.readAt() %></footer>
+</body>
+</html>

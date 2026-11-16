@@ -1,0 +1,2 @@
+<% for (const b of bars) { %><rect class="bar <%= b.cls %>" x="<%= b.x %>" y="<%= b.y %>" width="<%= b.w %>" height="<%= b.h %>"/><% } %>
+<% for (const hit of hits) { %><rect class="hit" x="<%= hit.x %>" y="0" width="<%= hit.w %>" height="100"><title><%= hit.title %></title></rect><% } %>

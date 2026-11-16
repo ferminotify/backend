@@ -1,0 +1,8 @@
+<%# Notifiche. Locals: data/notifiche.js %>
+<%- include('/components/stats', { items: summary }) %>
+<div class="grid2">
+  <%- include('/components/card', { title: 'Iscritti per notifiche ricevute', body: '/charts/columns',
+    data: h.columns(received.chart), empty: !received.any && 'Nessun dato.' }) %>
+  <%- include('/components/card', { title: 'Eventi per numero di destinatari', body: '/charts/columns',
+    data: h.columns(recipients.chart), empty: !recipients.any && 'Nessun dato.' }) %>
+</div>

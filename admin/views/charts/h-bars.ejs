@@ -1,0 +1,9 @@
+<%# Horizontal bars. Locals: h.hBars() %>
+<ol class="hbars <%= cls %>" aria-label="<%= label %>">
+<% for (const r of rows) { %>
+  <li>
+    <span class="l"><%= r.label %></span><span class="v"><%= r.text %><% if (r.note) { %><small><%= r.note %></small><% } %></span>
+    <span class="b" style="width:<%= r.width %>%"></span>
+  </li>
+<% } %>
+</ol>

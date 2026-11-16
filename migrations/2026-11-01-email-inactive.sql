@@ -20,4 +20,4 @@ CREATE TABLE IF NOT EXISTS public.email_bounces (
 CREATE INDEX IF NOT EXISTS email_bounces_sub ON public.email_bounces (sub_id, at);
 
 COMMIT;
--- Then staging/metabase/grants.sql, for the new table and columns.
+-- Then grant SELECT on the new table and columns to admin_ro (as in docker/db_init.sql), for the admin pages.

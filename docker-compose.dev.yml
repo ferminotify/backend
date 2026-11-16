@@ -73,6 +73,10 @@ services:
       # Dev-only: when Azure is empty, emails go to Mailpit (UI: http://localhost:8025)
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
+      # Admin pages: http://localhost:3001/admin/ (user admin, pass admin); DB login read-only (docker/db_init.sql)
+      ADMIN_PASSWORD: admin
+      ADMIN_DB_USER: admin_ro
+      ADMIN_DB_PASSWORD: test
     ports:
       - "3001:3001"
     depends_on:

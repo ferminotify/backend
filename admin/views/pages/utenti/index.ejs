@@ -1,0 +1,18 @@
+<%# Utenti. Locals: data/utenti.js %>
+<%- include('/components/stats', { items: summary }) %>
+<div class="grid3 stack">
+  <%- include('/components/card', { title: 'Canali', body: '/charts/h-bars', empty: !channels.length && 'Nessun dato.',
+    data: h.hBars({ rows: channels, label: 'Iscritti attivi per canale' }) }) %>
+  <%- include('/components/card', { title: 'Keyword più usate', body: '/charts/h-bars', empty: !tags.length && 'Nessun dato.',
+    data: h.hBars({ rows: tags, label: 'Keyword più usate dagli iscritti attivi' }) }) %>
+  <%- include('/components/card', { title: 'Ora della notifica giornaliera', body: '/charts/h-bars', empty: !times.length && 'Nessun dato.',
+    data: h.hBars({ rows: times, label: 'Ora della notifica giornaliera' }) }) %>
+</div>
+<div class="stack">
+  <%- include('/components/card', { title: 'Ultimo accesso, per settimana', body: '/charts/columns',
+    data: h.columns({
+      label: "Iscritti per settimana dell'ultimo accesso, ultime 12 settimane", totals: true, every: 2,
+      series: [{ label: 'Iscritti', cls: 'c-data' }], items: logins,
+    }) }) %>
+</div>
+<%- include('/components/card', { title: 'Iscritti', body: '/pages/utenti/list', region: 'list', data: locals }) %>

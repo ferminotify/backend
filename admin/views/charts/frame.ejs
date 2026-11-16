@@ -1,0 +1,14 @@
+<%#
+  Plot box shared by the charts: y labels on the left, SVG (viewBox 0..100 both ways, stretched), x labels under it.
+  Locals: label, ticks, xLabels (helpers/charts.js), svg (view of the marks), overlay (view over the plot, or null).
+%>
+<div class="chart" role="img" aria-label="<%= label %>">
+  <div class="y" aria-hidden="true"><% for (const t of ticks) { %><span style="bottom:<%= t.bottom %>%"><%= t.label %></span><% } %></div>
+  <div class="plot"><% if (overlay) { %><%- include(overlay) %><% } %>
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <% for (const t of ticks) { %><line class="grid<%= t.base ? ' base' : '' %>" x1="0" x2="100" y1="<%= t.y %>" y2="<%= t.y %>"/><% } %>
+      <%- include(svg) %>
+    </svg>
+  </div>
+  <div class="x" aria-hidden="true"><% for (const l of xLabels) { %><span<% if (l.cls) { %> class="<%= l.cls %>"<% } %> style="left:<%= l.at %>%"><%= l.text %><% if (l.sub) { %><b><%= l.sub %></b><% } %></span><% } %></div>
+</div>

@@ -1,0 +1,6 @@
+<%# Mail server rejections of the user (last 20). Locals: bounces %>
+<div class="list"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Risposta</th></tr></thead><tbody>
+<% for (const b of bounces) { %>
+  <tr><td><%= h.dateTime(new Date(b.at)) %></td><td><%= b.tipo %></td><td class="wrap"><%= b.reason || '–' %></td></tr>
+<% } %>
+</tbody></table></div>

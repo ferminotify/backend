@@ -1,5 +1,5 @@
-// SQL pieces shared by the admin pages (from staging/metabase/pages.mjs). Tables unqualified: the admin pool's
-// search_path is ADMIN_DB_SCHEMA (routes/admin.js).
+// SQL pieces shared by the admin pages. Tables unqualified: the admin pool's
+// search_path is public (routes/admin.js).
 
 export const ACTIVE = 'notifications >= 0';
 export const CHANNEL = (p = '') => `CASE ${p}notification_preferences WHEN 3 THEN 'Email e Telegram' WHEN 2 THEN 'Solo email'
