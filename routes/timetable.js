@@ -91,7 +91,7 @@ router.post('/search', async (req, res) => {
       ...Object.values(matches).flat(),
       ...Object.values(optional).flatMap((cats) => Object.values(cats).flat()),
     ]);
-    log.info('Events searched', { by: notifier ? 'notifier' : 'public', events: inRange.length, keywords: kws.length, found: found.size, ms: Date.now() - started });
+    if(!notifier) log.info('Events searched', { by: 'public', events: inRange.length, keywords: kws.length, found: found.size, ms: Date.now() - started });
     res.json({ events: inRange.filter((e) => found.has(e.uid)), matches, optional, source, stale });
   } catch (err) {
     log.error('Event search failed', { error: err.message });
