@@ -1,7 +1,8 @@
-<%# One rejection; same columns as list() 'rifiuti' in data/email.js. Locals: r %>
+<%# One rejection; same columns as list() 'rifiuti' in data/email.js. Locals: r, kinds %>
 <tr>
   <td><%= h.dateTime(new Date(r.at)) %></td>
   <td><a class="user" href="utente?id=<%= r.sub_id %>"><%= r.email %></a></td>
+  <td><%= kinds[r.kind] || r.kind || '–' %></td>
   <td><span class="badge <%= r.rifiuto === 'Casella eliminata' ? 'bad' : 'warn' %>"><%= r.rifiuto %></span></td>
   <td><%= r.disattivata ? 'Sì' : 'No' %></td>
   <td class="wrap"><%= r.provider %>: <%= r.reason || '–' %></td>

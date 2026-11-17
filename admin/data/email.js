@@ -7,6 +7,13 @@ const GIORNI = [[7, '7 giorni'], [30, '30 giorni'], [90, '90 giorni']];
 const TIPI = [['', 'Tutti'], ...Object.entries(KIND_LABEL)];
 const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['rifiuti', 'Rifiuti'], ['mai-aperte', 'Mai aperte']];
 const RIFIUTI = [['', 'Tutti'], ...REJECTION_LABELS.map((l) => [l, l])];
+// A type of email chosen: only the lists that have one (a dead mailbox or a never-opened user has none).
+const ELENCHI_TIPO = ['inviate', 'rifiuti'];
+const elenchiOf = (tipo) => (tipo ? ELENCHI.filter(([v]) => ELENCHI_TIPO.includes(v)) : ELENCHI);
+// The email a rejection is about: providers do not say, so the last tracked one to that
+// subscriber in the day before it (Mailgun gives up after 8 hours). Alias b.
+const BOUNCE_KIND = `(SELECT e.kind FROM email_sends e WHERE e.sub_id = b.sub_id AND e.sent_at <= b.at
+  AND e.sent_at > b.at - interval '1 day' ORDER BY e.sent_at DESC LIMIT 1)`;
 const OPENED = `opened_at IS NOT NULL AND ${NO_APPLE}`;
 
 const DELAY = buckets('m', [['< 60', 'Entro 1 ora'], ['< 360', '1-6 ore'], ['< 1440', '6-24 ore'], ['< 4320', '1-3 giorni'], ['', 'Oltre 3 giorni']]);
@@ -21,8 +28,8 @@ function filtersOf(req) {
 }
 
 // Cells: views/pages/email/row-<elenco>.ejs, same order as cols.
-function list(req, { W, giorni }) {
-  const elenco = pick(req.query.elenco, ELENCHI.map(([v]) => v), 'inviate');
+function list(req, { W, giorni, tipo }) {
+  const elenco = pick(req.query.elenco, elenchiOf(tipo).map(([v]) => v), 'inviate');
   const q = text(req.query.q);
   const params = q ? [like(q)] : [];
   if (elenco === 'morte') {
@@ -43,18 +50,20 @@ function list(req, { W, giorni }) {
     // One row per rejection in the period, as the "Rifiuti dei server di posta" card counts them.
     const rifiuto = pick(req.query.rifiuto, RIFIUTI.map(([v]) => v), '');
     const where = [`b.at >= now() - ${giorni} * interval '1 day'`];
+    if (tipo) where.push(`${BOUNCE_KIND} = '${tipo}'`); // safe inline: from TIPI
     if (q) where.push(`b.email ILIKE $${params.length}`);
     if (rifiuto) {
       params.push(rifiuto);
       where.push(`${REJECTION} = $${params.length}`);
     }
     return { elenco, q, rifiuto, sql: {
-      select: `b.at, b.sub_id, b.email, ${REJECTION} AS rifiuto, b.provider, b.reason, s.email_inactive_at IS NOT NULL AS disattivata`,
+      select: `b.at, b.sub_id, b.email, ${BOUNCE_KIND} AS kind, ${REJECTION} AS rifiuto, b.provider, b.reason, s.email_inactive_at IS NOT NULL AS disattivata`,
       from: `FROM email_bounces b JOIN subscribers s ON s.id = b.sub_id WHERE ${where.join(' AND ')}`,
       order: 'b.at DESC', params,
     }, cols: [
       { label: 'Data', key: 'data', sort: 'b.at', initial: 'desc', desc1: true, text: (r) => csvDate(r.at) },
       { label: 'Email', key: 'email', sort: 'lower(b.email)', text: (r) => r.email },
+      { label: 'Tipo', key: 'tipo', sort: 'kind', text: (r) => KIND_LABEL[r.kind] || r.kind || '' },
       { label: 'Rifiuto', key: 'rifiuto', sort: 'rifiuto', text: (r) => r.rifiuto },
       { label: 'Email disattivata', key: 'disattivata', sort: 'disattivata', text: (r) => (r.disattivata ? 'Sì' : 'No') },
       { label: 'Motivo', key: 'motivo', sort: 'b.reason', text: (r) => `${r.provider}: ${r.reason || ''}` },
@@ -93,7 +102,7 @@ function list(req, { W, giorni }) {
 }
 
 const listLocals = (req, l, ls, page) => ({
-  tabs: ELENCHI.map(([v, label]) => ({ href: link(req, { elenco: v, p: '', q: '', ord: '', dir: '' }), label, active: v === l.elenco })),
+  tabs: elenchiOf(filtersOf(req).tipo).map(([v, label]) => ({ href: link(req, { elenco: v, p: '', q: '', ord: '', dir: '' }), label, active: v === l.elenco })),
   filters: [
     { name: 'q', label: 'Cerca', value: l.q, placeholder: l.elenco === 'inviate' ? 'Nome o email' : 'Email' },
     ...(l.elenco === 'rifiuti' ? [{ name: 'rifiuto', label: 'Rifiuto', value: l.rifiuto, options: RIFIUTI }] : []),
@@ -133,7 +142,8 @@ export async function email(db, req) {
     q(perPeriod('month', 12, 'subscribers s', "(s.email_inactive_at AT TIME ZONE 'Europe/Rome')", [
       ['confermate', `count(*) FILTER (WHERE ${DEAD_STATE} = 'Confermata')`], ['in_verifica', `count(*) FILTER (WHERE ${DEAD_STATE} = 'In verifica')`],
     ])),
-    q(`SELECT ${REJECTION} AS label, count(*)::int AS n FROM email_bounces WHERE at >= now() - ${f.giorni} * interval '1 day' GROUP BY 1 ORDER BY 2 DESC`),
+    q(`SELECT ${REJECTION} AS label, count(*)::int AS n FROM email_bounces b WHERE at >= now() - ${f.giorni} * interval '1 day'${f.tipo ? ` AND ${BOUNCE_KIND} = '${f.tipo}'` : ''}
+       GROUP BY 1 ORDER BY 2 DESC`),
     q(`SELECT ${OTHER_CHANNEL} AS label, count(*)::int AS n FROM subscribers s WHERE s.email_inactive_at IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`),
     runList(db, req, ls),
   ]);
