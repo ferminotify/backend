@@ -85,7 +85,7 @@ router.post('/', async (req, res) => {
   } catch (err) {
     if (err instanceof SchoolLoginError) {
       schoolLoginFailed(username);
-      log.info('Moodle login rejected', { ip: clientIp(req) });
+      log.info('Moodle login rejected', { ip: clientIp(req), username });
       return res.status(401).json({ error: 'Nome utente o password errati', code: 'school_login_failed' });
     }
     log.error('Moodle login error', { error: err.message });
