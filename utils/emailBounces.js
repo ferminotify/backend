@@ -48,7 +48,7 @@ export function mailgunSignatureOk(sig, key, now = Date.now()) {
  * the check after 3 days would never be delivered. Removed on the first "mailbox deleted".
  * Only with MAILGUN_API_KEY and MAILGUN_DOMAIN (MAILGUN_API_BASE for the EU region).
  */
-async function forgetMailgunBounce(email) {
+export async function forgetMailgunBounce(email) {
   const key = process.env.MAILGUN_API_KEY;
   const domain = process.env.MAILGUN_DOMAIN;
   if (!key || !domain) return;
@@ -84,19 +84,17 @@ export async function recordBounce(email, provider, reason, opts = {}) {
     [email, provider, status, text]
   );
   let deactivated = 0;
-  // Turning the email off is paused: for now only count the dead mailboxes (email_bounces,
-  // status unknown_user). Uncomment to turn it back on.
-  // if (status === 'unknown_user' && ins.rowCount) {
-  //   const upd = await pool.query(
-  //     // The rejection's own time: the notifier counts the rejections from it on (email_check_due).
-  //     `UPDATE subscribers SET email_inactive_at = $3, email_inactive_reason = $2
-  //       WHERE id = ANY($1::bigint[]) AND email_inactive_at IS NULL
-  //       RETURNING id`,
-  //     [ins.rows.map((r) => r.sub_id), `${provider}: ${text}`.slice(0, 1000), ins.rows[0].at]
-  //   );
-  //   deactivated = upd.rowCount;
-  //   if (provider === 'mailgun') await forgetMailgunBounce(email);
-  // }
+  if (status === 'unknown_user' && ins.rowCount) {
+    const upd = await pool.query(
+      // The rejection's own time: the notifier counts the rejections from it on (email_check_due).
+      `UPDATE subscribers SET email_inactive_at = $3, email_inactive_reason = $2
+        WHERE id = ANY($1::bigint[]) AND email_inactive_at IS NULL
+        RETURNING id`,
+      [ins.rows.map((r) => r.sub_id), `${provider}: ${text}`.slice(0, 1000), ins.rows[0].at]
+    );
+    deactivated = upd.rowCount;
+    if (provider === 'mailgun') await forgetMailgunBounce(email);
+  }
   log.info('Email bounce', { provider, status, subscribers: ins.rowCount, deactivated, ids: ins.rows.map((r) => r.sub_id) });
   return { status, stored: ins.rowCount, deactivated };
 }

@@ -1,11 +1,12 @@
-// Email: open rates, dead mailboxes; lists of sent, dead and never opened.
+// Email: open rates, dead mailboxes; lists of sent, dead, rejections and never opened.
 import { num, pct, dayMonth, weekday } from '../helpers/format.js';
 import { pick, text, like, link, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from '../lists.js';
-import { DEAD_STATE, OTHER_CHANNEL, REJECTION, NO_APPLE, KIND_LABEL, VIA_LABEL, buckets, fillBuckets, perDay, perPeriod } from '../sql.js';
+import { DEAD_STATE, OTHER_CHANNEL, REJECTION, REJECTION_LABELS, NO_APPLE, KIND_LABEL, VIA_LABEL, buckets, fillBuckets, perDay, perPeriod } from '../sql.js';
 
 const GIORNI = [[7, '7 giorni'], [30, '30 giorni'], [90, '90 giorni']];
 const TIPI = [['', 'Tutti'], ...Object.entries(KIND_LABEL)];
-const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['mai-aperte', 'Mai aperte']];
+const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['rifiuti', 'Rifiuti'], ['mai-aperte', 'Mai aperte']];
+const RIFIUTI = [['', 'Tutti'], ...REJECTION_LABELS.map((l) => [l, l])];
 const OPENED = `opened_at IS NOT NULL AND ${NO_APPLE}`;
 
 const DELAY = buckets('m', [['< 60', 'Entro 1 ora'], ['< 360', '1-6 ore'], ['< 1440', '6-24 ore'], ['< 4320', '1-3 giorni'], ['', 'Oltre 3 giorni']]);
@@ -20,7 +21,7 @@ function filtersOf(req) {
 }
 
 // Cells: views/pages/email/row-<elenco>.ejs, same order as cols.
-function list(req, { W }) {
+function list(req, { W, giorni }) {
   const elenco = pick(req.query.elenco, ELENCHI.map(([v]) => v), 'inviate');
   const q = text(req.query.q);
   const params = q ? [like(q)] : [];
@@ -36,6 +37,28 @@ function list(req, { W }) {
       { label: 'Dal', key: 'dal', sort: 's.email_inactive_at', initial: 'desc', desc1: true, text: (r) => csvDate(r.dal) },
       { label: 'Motivo', key: 'motivo', sort: 's.email_inactive_reason', text: (r) => r.motivo || '' },
       { label: 'ID', key: 'id', sort: 's.id', num: true, text: (r) => r.id },
+    ] };
+  }
+  if (elenco === 'rifiuti') {
+    // One row per rejection in the period, as the "Rifiuti dei server di posta" card counts them.
+    const rifiuto = pick(req.query.rifiuto, RIFIUTI.map(([v]) => v), '');
+    const where = [`b.at >= now() - ${giorni} * interval '1 day'`];
+    if (q) where.push(`b.email ILIKE $${params.length}`);
+    if (rifiuto) {
+      params.push(rifiuto);
+      where.push(`${REJECTION} = $${params.length}`);
+    }
+    return { elenco, q, rifiuto, sql: {
+      select: `b.at, b.sub_id, b.email, ${REJECTION} AS rifiuto, b.provider, b.reason, s.email_inactive_at IS NOT NULL AS disattivata`,
+      from: `FROM email_bounces b JOIN subscribers s ON s.id = b.sub_id WHERE ${where.join(' AND ')}`,
+      order: 'b.at DESC', params,
+    }, cols: [
+      { label: 'Data', key: 'data', sort: 'b.at', initial: 'desc', desc1: true, text: (r) => csvDate(r.at) },
+      { label: 'Email', key: 'email', sort: 'lower(b.email)', text: (r) => r.email },
+      { label: 'Rifiuto', key: 'rifiuto', sort: 'rifiuto', text: (r) => r.rifiuto },
+      { label: 'Email disattivata', key: 'disattivata', sort: 'disattivata', text: (r) => (r.disattivata ? 'Sì' : 'No') },
+      { label: 'Motivo', key: 'motivo', sort: 'b.reason', text: (r) => `${r.provider}: ${r.reason || ''}` },
+      { label: 'ID', key: 'id', sort: 'b.sub_id', num: true, text: (r) => r.sub_id },
     ] };
   }
   if (elenco === 'mai-aperte') {
@@ -71,7 +94,10 @@ function list(req, { W }) {
 
 const listLocals = (req, l, ls, page) => ({
   tabs: ELENCHI.map(([v, label]) => ({ href: link(req, { elenco: v, p: '', q: '', ord: '', dir: '' }), label, active: v === l.elenco })),
-  filters: [{ name: 'q', label: 'Cerca', value: l.q, placeholder: l.elenco === 'inviate' ? 'Nome o email' : 'Email' }],
+  filters: [
+    { name: 'q', label: 'Cerca', value: l.q, placeholder: l.elenco === 'inviate' ? 'Nome o email' : 'Email' },
+    ...(l.elenco === 'rifiuti' ? [{ name: 'rifiuto', label: 'Rifiuto', value: l.rifiuto, options: RIFIUTI }] : []),
+  ],
   keep: { giorni: req.query.giorni, tipo: req.query.tipo, elenco: req.query.elenco, ...keepSort(req) },
   elenco: l.elenco,
   list: { cols: l.cols, ...page, ord: ls.ord, dir: ls.dir, perPage: PER_PAGE, row: `/pages/email/row-${l.elenco}`, kinds: KIND_LABEL, vias: VIA_LABEL },
