@@ -9,7 +9,7 @@ async function getUserEmailWithTelegramID(telegramId) {
         WHERE telegram = $1`,
       [telegramId]
     );
-    return RES.rows[0].email;
+    return RES.rows[0]?.email;
   } catch (err) {
     log.error('ERR GET EMAIL WITH TG ID', { telegramId, error: err.stack || err });
   }

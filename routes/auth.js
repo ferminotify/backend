@@ -170,8 +170,11 @@ router.get('/register/confirmation/:code', async (req, res) => {
     try {
         if (!String(code).startsWith('X')) return res.status(400).json({ error: 'Codice di conferma non valido!' });
         const email = await getUserEmailWithTelegramID(code);
-        if (!email) return res.status(400).json({ error: 'Codice di conferma non valido!' });
-        
+        if (!email) {
+            log.warn('Register confirmation - unknown code', { code, ip: req.ip });
+            return res.status(400).json({ error: 'Codice di conferma scaduto o non valido!' });
+        }
+
         if (await getNumberNotification(email) > -1) return res.status(400).json({ error: 'Account già confermato!' });
 
         let gender = await getGenderByEmail(email);

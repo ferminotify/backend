@@ -155,7 +155,7 @@ router.post('/complete', async (req, res) => {
     let pending = null;
     if (claims.pendingId) {
       const p = await client.query(
-        'SELECT id FROM subscribers WHERE id = $1 AND lower(school_username) = lower($2) AND notifications < 0 FOR UPDATE',
+        'SELECT id, email, telegram FROM subscribers WHERE id = $1 AND lower(school_username) = lower($2) AND notifications < 0 FOR UPDATE',
         [claims.pendingId, claims.schoolUsername]
       );
       pending = p.rows[0] || null;
@@ -201,9 +201,10 @@ router.post('/complete', async (req, res) => {
       return res.status(202).json({ linkSent: true });
     }
     // notifications = -1: unconfirmed until the link in the email is opened (as /register).
-    const code = await getTelegramTemporaryCode();
+    const sameEmail = pending?.telegram && pending.email?.toLowerCase() === email;
+    const code = sameEmail ? pending.telegram : await getTelegramTemporaryCode();
     if (pending) {
-      // New address and code: the link sent to the old address stops working.
+      // New address = new code
       const upd = await client.query(
         `UPDATE subscribers SET name = $1, surname = $2, email = $3, gender = $4, telegram = $5, tags = COALESCE($7::text[], tags)
           WHERE id = $6 RETURNING id, email, unsub_token`,
