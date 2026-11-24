@@ -6,3 +6,9 @@ DO $$ BEGIN
   ALTER TABLE public.email_sends ADD CONSTRAINT email_sends_recipient CHECK (sub_id IS NOT NULL OR email IS NOT NULL);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS email_sends_email ON public.email_sends (lower(email)) WHERE email IS NOT NULL;
+-- The admin pages read the new column (admin_ro has column grants, as in docker/db_init.sql).
+DO $$ BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'admin_ro') THEN
+    GRANT SELECT (email) ON public.email_sends TO admin_ro;
+  END IF;
+END $$;

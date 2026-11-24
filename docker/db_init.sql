@@ -133,18 +133,22 @@ CREATE TABLE public.filtra_eventi_kw (
     email       character varying
 );
 
--- ── email_sends / email_bounces (migrations 2026-10-30, 2026-11-01) ───────────
+-- ── email_sends / email_bounces (migrations 2026-10-30, 2026-11-01, 2026-11-25) ─
 
+-- A row has a subscriber or, for a non-subscriber (promo-nonsub), an email.
 CREATE TABLE public.email_sends (
     id         uuid        PRIMARY KEY,
-    sub_id     bigint      NOT NULL REFERENCES public.subscribers(id) ON DELETE CASCADE,
+    sub_id     bigint      REFERENCES public.subscribers(id) ON DELETE CASCADE,
     kind       text        NOT NULL,
     sent_at    timestamptz NOT NULL DEFAULT now(),
     opened_at  timestamptz,
-    via        text
+    via        text,
+    email      text,
+    CONSTRAINT email_sends_recipient CHECK (sub_id IS NOT NULL OR email IS NOT NULL)
 );
 CREATE INDEX email_sends_sent_at ON public.email_sends (sent_at);
 CREATE INDEX email_sends_sub     ON public.email_sends (sub_id, sent_at);
+CREATE INDEX email_sends_email   ON public.email_sends (lower(email)) WHERE email IS NOT NULL;
 
 CREATE TABLE public.email_bounces (
     id        bigserial   PRIMARY KEY,
