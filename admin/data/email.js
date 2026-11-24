@@ -88,13 +88,14 @@ function list(req, { W, giorni, tipo }) {
     ] };
   }
   return { elenco, q, sql: {
-    select: `e.sent_at, s.name || ' ' || s.surname AS utente, s.email, e.kind, e.opened_at, e.via, e.sub_id`,
-    from: `FROM email_sends e JOIN subscribers s ON s.id = e.sub_id WHERE ${W('e.')}${q ? " AND (s.email ILIKE $1 OR s.name || ' ' || s.surname ILIKE $1)" : ''}`,
+    // Non-subscribers (promo-nonsub): no subscriber row, the email on the send.
+    select: `e.sent_at, coalesce(s.name || ' ' || s.surname, 'Non iscritto') AS utente, coalesce(s.email, e.email) AS email, e.kind, e.opened_at, e.via, e.sub_id`,
+    from: `FROM email_sends e LEFT JOIN subscribers s ON s.id = e.sub_id WHERE ${W('e.')}${q ? " AND (coalesce(s.email, e.email) ILIKE $1 OR s.name || ' ' || s.surname ILIKE $1)" : ''}`,
     order: 'e.sent_at DESC', params,
   }, cols: [
     { label: 'Inviata', key: 'inviata', sort: 'e.sent_at', initial: 'desc', desc1: true, text: (r) => csvDate(r.sent_at) },
     { label: 'Utente', key: 'utente', sort: "lower(s.name || ' ' || s.surname)", text: (r) => r.utente },
-    { label: 'Email', key: 'email', sort: 'lower(s.email)', text: (r) => r.email },
+    { label: 'Email', key: 'email', sort: 'lower(coalesce(s.email, e.email))', text: (r) => r.email },
     { label: 'Tipo', key: 'tipo', sort: 'e.kind', text: (r) => KIND_LABEL[r.kind] || r.kind },
     { label: 'Aperta', key: 'aperta', sort: 'e.opened_at', desc1: true, text: (r) => csvDate(r.opened_at) },
     { label: 'Con', key: 'con', sort: 'e.via', text: (r) => VIA_LABEL[r.via] || '' },
@@ -138,7 +139,7 @@ export async function email(db, req) {
     q(`SELECT extract(hour FROM opened_at AT TIME ZONE 'Europe/Rome')::int AS h, count(*)::int AS n
        FROM email_sends WHERE ${OPENED} AND ${W} GROUP BY 1`),
     q(`SELECT ${RATE.label} AS b, count(*)::int AS n FROM (SELECT count(*) FILTER (WHERE ${OPENED})::numeric / count(*) AS r
-       FROM email_sends WHERE ${NO_APPLE} AND ${W} GROUP BY sub_id) x GROUP BY 1`),
+       FROM email_sends WHERE ${NO_APPLE} AND ${W} GROUP BY coalesce(sub_id::text, lower(email))) x GROUP BY 1`),
     q(perPeriod('month', 12, 'subscribers s', "(s.email_inactive_at AT TIME ZONE 'Europe/Rome')", [
       ['confermate', `count(*) FILTER (WHERE ${DEAD_STATE} = 'Confermata')`], ['in_verifica', `count(*) FILTER (WHERE ${DEAD_STATE} = 'In verifica')`],
     ])),

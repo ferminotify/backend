@@ -14,7 +14,7 @@ export const REJECTION = `CASE WHEN status = 'unknown_user' THEN 'Casella elimin
   WHEN reason ~* 'too old' THEN 'Consegna scaduta' ELSE 'Altro' END`;
 export const REJECTION_LABELS = ['Casella eliminata', 'Bloccata da Azure', 'Account sospeso', 'Casella piena', 'Consegna scaduta', 'Altro'];
 export const NO_APPLE = "via IS DISTINCT FROM 'apple'";
-export const KIND_LABEL = { daily: 'Giornaliera', lastminute: 'Last minute', 'promo-orario': 'Campagna Orario' };
+export const KIND_LABEL = { daily: 'Giornaliera', lastminute: 'Last minute', 'promo-orario': 'Campagna Orario', 'promo-nonsub': 'Campagna non iscritti' };
 export const VIA_LABEL = { gmail: 'Gmail', apple: 'Apple Mail', altro: 'Altro' };
 
 /** Histogram over labeled buckets: [[sql condition, label], ...] in order, the last one is the rest. */
