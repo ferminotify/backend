@@ -4,9 +4,13 @@ import { pick, text, like, link, runList, csvResponse, csvDate, sorted, keepSort
 import { DEAD_STATE, OTHER_CHANNEL, REJECTION, REJECTION_LABELS, NO_APPLE, KIND_LABEL, GENERAL_PREFIX, VIA_LABEL, buckets, fillBuckets, perDay, perPeriod } from '../sql.js';
 
 const GIORNI = [[7, '7 giorni'], [30, '30 giorni'], [90, '90 giorni']];
-const TIPI = [['', 'Tutti'], ...Object.entries(KIND_LABEL).filter(([k]) => !k.startsWith(GENERAL_PREFIX))];
+const GENERALI = 'generali';
+const TIPI = [['', 'Tutti'], ...Object.entries(KIND_LABEL).filter(([k]) => !k.startsWith(GENERAL_PREFIX)), [GENERALI, 'Email generali']];
 const NOT_GENERAL = (p = '') => `${p}kind NOT LIKE '${GENERAL_PREFIX}%'`;
-const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['rifiuti', 'Rifiuti'], ['mai-aperte', 'Mai aperte'], ['generali', 'Email generali']];
+// The chosen type as a condition on a kind expression; none = all but the general ones.
+const kindIs = (tipo, expr) =>
+  tipo === GENERALI ? `${expr} LIKE '${GENERAL_PREFIX}%'` : tipo ? `${expr} = '${tipo}'` : `${expr} NOT LIKE '${GENERAL_PREFIX}%'`;
+const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['rifiuti', 'Rifiuti'], ['mai-aperte', 'Mai aperte']];
 const RIFIUTI = [['', 'Tutti'], ...REJECTION_LABELS.map((l) => [l, l])];
 // A type of email chosen: only the lists that have one (a dead mailbox or a never-opened user has none).
 const ELENCHI_TIPO = ['inviate', 'rifiuti'];
@@ -25,12 +29,12 @@ function filtersOf(req) {
   const tipo = pick(req.query.tipo, TIPI.map(([v]) => v), '');
   // Safe inline: both from the lists above. p = alias prefix.
   const since = (p = '') => `${p}sent_at >= now() - ${giorni} * interval '1 day'`;
-  const W = (p = '') => `${since(p)} AND ${tipo ? `${p}kind = '${tipo}'` : NOT_GENERAL(p)}`;
-  return { giorni, tipo, since, W };
+  const W = (p = '') => `${since(p)} AND ${kindIs(tipo, `${p}kind`)}`;
+  return { giorni, tipo, W };
 }
 
 // Cells: views/pages/email/row-<elenco>.ejs, same order as cols.
-function list(req, { W, since, giorni, tipo }) {
+function list(req, { W, giorni, tipo }) {
   const elenco = pick(req.query.elenco, elenchiOf(tipo).map(([v]) => v), 'inviate');
   const q = text(req.query.q);
   const params = q ? [like(q)] : [];
@@ -52,7 +56,7 @@ function list(req, { W, since, giorni, tipo }) {
     // One row per rejection in the period, as the "Rifiuti dei server di posta" card counts them.
     const rifiuto = pick(req.query.rifiuto, RIFIUTI.map(([v]) => v), '');
     const where = [`b.at >= now() - ${giorni} * interval '1 day'`];
-    if (tipo) where.push(`${BOUNCE_KIND} = '${tipo}'`); // safe inline: from TIPI
+    if (tipo) where.push(kindIs(tipo, BOUNCE_KIND)); // safe inline: from TIPI
     if (q) where.push(`b.email ILIKE $${params.length}`);
     if (rifiuto) {
       params.push(rifiuto);
@@ -89,11 +93,10 @@ function list(req, { W, since, giorni, tipo }) {
       { label: 'ID', key: 'id', sort: 's.id', num: true, text: (r) => r.id },
     ] };
   }
-  const generali = elenco === 'generali';
   return { elenco, q, sql: {
     // Non-subscribers (promo-nonsub): no subscriber row, the email on the send.
     select: `e.sent_at, coalesce(s.name || ' ' || s.surname, 'Non iscritto') AS utente, coalesce(s.email, e.email) AS email, e.kind, e.opened_at, e.via, e.sub_id`,
-    from: `FROM email_sends e LEFT JOIN subscribers s ON s.id = e.sub_id WHERE ${generali ? `${since('e.')} AND e.kind LIKE '${GENERAL_PREFIX}%'` : W('e.')}${q ? " AND (coalesce(s.email, e.email) ILIKE $1 OR s.name || ' ' || s.surname ILIKE $1)" : ''}`,
+    from: `FROM email_sends e LEFT JOIN subscribers s ON s.id = e.sub_id WHERE ${W('e.')}${q ? " AND (coalesce(s.email, e.email) ILIKE $1 OR s.name || ' ' || s.surname ILIKE $1)" : ''}`,
     order: 'e.sent_at DESC', params,
   }, cols: [
     { label: 'Inviata', key: 'inviata', sort: 'e.sent_at', initial: 'desc', desc1: true, text: (r) => csvDate(r.sent_at) },
@@ -113,7 +116,7 @@ const listLocals = (req, l, ls, page) => ({
   ],
   keep: { giorni: req.query.giorni, tipo: req.query.tipo, elenco: req.query.elenco, ...keepSort(req) },
   elenco: l.elenco,
-  list: { cols: l.cols, ...page, ord: ls.ord, dir: ls.dir, perPage: PER_PAGE, row: `/pages/email/row-${l.elenco === 'generali' ? 'inviate' : l.elenco}`, kinds: KIND_LABEL, vias: VIA_LABEL },
+  list: { cols: l.cols, ...page, ord: ls.ord, dir: ls.dir, perPage: PER_PAGE, row: `/pages/email/row-${l.elenco}`, kinds: KIND_LABEL, vias: VIA_LABEL },
 });
 
 const bar = (r) => ({ label: r.label, value: r.n });
@@ -134,7 +137,7 @@ export async function email(db, req) {
        FROM email_sends WHERE ${W}`),
     q(perDay(f.giorni, 'email_sends', 'sent_at', [
       ['aperte', `count(*) FILTER (WHERE ${OPENED})`], ['apple', "count(*) FILTER (WHERE via = 'apple')"], ['non_aperte', 'count(*) - count(opened_at)'],
-    ], f.tipo ? `kind = '${f.tipo}'` : NOT_GENERAL())),
+    ], kindIs(f.tipo, 'kind'))),
     q(`SELECT kind, count(*)::int AS inviate, count(*) FILTER (WHERE ${OPENED})::numeric / NULLIF(count(*) FILTER (WHERE ${NO_APPLE}), 0) AS tasso
        FROM email_sends WHERE ${W} GROUP BY 1 ORDER BY 2 DESC`),
     q(`SELECT ${DELAY.label} AS b, count(*)::int AS n FROM (SELECT extract(epoch FROM opened_at - sent_at) / 60 AS m
@@ -146,7 +149,7 @@ export async function email(db, req) {
     q(perPeriod('month', 12, 'subscribers s', "(s.email_inactive_at AT TIME ZONE 'Europe/Rome')", [
       ['confermate', `count(*) FILTER (WHERE ${DEAD_STATE} = 'Confermata')`], ['in_verifica', `count(*) FILTER (WHERE ${DEAD_STATE} = 'In verifica')`],
     ])),
-    q(`SELECT ${REJECTION} AS label, count(*)::int AS n FROM email_bounces b WHERE at >= now() - ${f.giorni} * interval '1 day'${f.tipo ? ` AND ${BOUNCE_KIND} = '${f.tipo}'` : ''}
+    q(`SELECT ${REJECTION} AS label, count(*)::int AS n FROM email_bounces b WHERE at >= now() - ${f.giorni} * interval '1 day'${f.tipo ? ` AND ${kindIs(f.tipo, BOUNCE_KIND)}` : ''}
        GROUP BY 1 ORDER BY 2 DESC`),
     q(`SELECT ${OTHER_CHANNEL} AS label, count(*)::int AS n FROM subscribers s WHERE s.email_inactive_at IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`),
     runList(db, req, ls),
