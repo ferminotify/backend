@@ -1,11 +1,12 @@
 // Email: open rates, dead mailboxes; lists of sent, dead, rejections and never opened.
 import { num, pct, dayMonth, weekday } from '../helpers/format.js';
 import { pick, text, like, link, runList, csvResponse, csvDate, sorted, keepSort, PER_PAGE } from '../lists.js';
-import { DEAD_STATE, OTHER_CHANNEL, REJECTION, REJECTION_LABELS, NO_APPLE, KIND_LABEL, VIA_LABEL, buckets, fillBuckets, perDay, perPeriod } from '../sql.js';
+import { DEAD_STATE, OTHER_CHANNEL, REJECTION, REJECTION_LABELS, NO_APPLE, KIND_LABEL, GENERAL_PREFIX, VIA_LABEL, buckets, fillBuckets, perDay, perPeriod } from '../sql.js';
 
 const GIORNI = [[7, '7 giorni'], [30, '30 giorni'], [90, '90 giorni']];
-const TIPI = [['', 'Tutti'], ...Object.entries(KIND_LABEL)];
-const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['rifiuti', 'Rifiuti'], ['mai-aperte', 'Mai aperte']];
+const TIPI = [['', 'Tutti'], ...Object.entries(KIND_LABEL).filter(([k]) => !k.startsWith(GENERAL_PREFIX))];
+const NOT_GENERAL = (p = '') => `${p}kind NOT LIKE '${GENERAL_PREFIX}%'`;
+const ELENCHI = [['inviate', 'Email inviate'], ['morte', 'Caselle morte'], ['rifiuti', 'Rifiuti'], ['mai-aperte', 'Mai aperte'], ['generali', 'Email generali']];
 const RIFIUTI = [['', 'Tutti'], ...REJECTION_LABELS.map((l) => [l, l])];
 // A type of email chosen: only the lists that have one (a dead mailbox or a never-opened user has none).
 const ELENCHI_TIPO = ['inviate', 'rifiuti'];
@@ -23,12 +24,13 @@ function filtersOf(req) {
   const giorni = pick(req.query.giorni, GIORNI.map(([v]) => v), 30);
   const tipo = pick(req.query.tipo, TIPI.map(([v]) => v), '');
   // Safe inline: both from the lists above. p = alias prefix.
-  const W = (p = '') => `${p}sent_at >= now() - ${giorni} * interval '1 day'${tipo ? ` AND ${p}kind = '${tipo}'` : ''}`;
-  return { giorni, tipo, W };
+  const since = (p = '') => `${p}sent_at >= now() - ${giorni} * interval '1 day'`;
+  const W = (p = '') => `${since(p)} AND ${tipo ? `${p}kind = '${tipo}'` : NOT_GENERAL(p)}`;
+  return { giorni, tipo, since, W };
 }
 
 // Cells: views/pages/email/row-<elenco>.ejs, same order as cols.
-function list(req, { W, giorni, tipo }) {
+function list(req, { W, since, giorni, tipo }) {
   const elenco = pick(req.query.elenco, elenchiOf(tipo).map(([v]) => v), 'inviate');
   const q = text(req.query.q);
   const params = q ? [like(q)] : [];
@@ -76,7 +78,7 @@ function list(req, { W, giorni, tipo }) {
       select: `s.id, s.email, count(*)::int AS ricevute, EXISTS (SELECT 1 FROM unnest(s.tags) t WHERE t ~ '^5[A-Z]')
         AND NOT EXISTS (SELECT 1 FROM unnest(s.tags) t WHERE t ~ '^[1-4][A-Z]') AS solo_quinte`,
       from: `FROM email_sends e JOIN subscribers s ON s.id = e.sub_id
-        WHERE e.sent_at >= now() - interval '60 days' AND s.notification_preferences & 2 = 2 AND s.email_inactive_at IS NULL
+        WHERE e.sent_at >= now() - interval '60 days' AND ${NOT_GENERAL('e.')} AND s.notification_preferences & 2 = 2 AND s.email_inactive_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM email_bounces b WHERE b.sub_id = s.id)${q ? ' AND s.email ILIKE $1' : ''}
         GROUP BY s.id HAVING count(*) >= 5 AND count(e.opened_at) = 0`,
       order: 'solo_quinte DESC, ricevute DESC', params,
@@ -87,10 +89,11 @@ function list(req, { W, giorni, tipo }) {
       { label: 'ID', key: 'id', sort: 's.id', num: true, text: (r) => r.id },
     ] };
   }
+  const generali = elenco === 'generali';
   return { elenco, q, sql: {
     // Non-subscribers (promo-nonsub): no subscriber row, the email on the send.
     select: `e.sent_at, coalesce(s.name || ' ' || s.surname, 'Non iscritto') AS utente, coalesce(s.email, e.email) AS email, e.kind, e.opened_at, e.via, e.sub_id`,
-    from: `FROM email_sends e LEFT JOIN subscribers s ON s.id = e.sub_id WHERE ${W('e.')}${q ? " AND (coalesce(s.email, e.email) ILIKE $1 OR s.name || ' ' || s.surname ILIKE $1)" : ''}`,
+    from: `FROM email_sends e LEFT JOIN subscribers s ON s.id = e.sub_id WHERE ${generali ? `${since('e.')} AND e.kind LIKE '${GENERAL_PREFIX}%'` : W('e.')}${q ? " AND (coalesce(s.email, e.email) ILIKE $1 OR s.name || ' ' || s.surname ILIKE $1)" : ''}`,
     order: 'e.sent_at DESC', params,
   }, cols: [
     { label: 'Inviata', key: 'inviata', sort: 'e.sent_at', initial: 'desc', desc1: true, text: (r) => csvDate(r.sent_at) },
@@ -110,7 +113,7 @@ const listLocals = (req, l, ls, page) => ({
   ],
   keep: { giorni: req.query.giorni, tipo: req.query.tipo, elenco: req.query.elenco, ...keepSort(req) },
   elenco: l.elenco,
-  list: { cols: l.cols, ...page, ord: ls.ord, dir: ls.dir, perPage: PER_PAGE, row: `/pages/email/row-${l.elenco}`, kinds: KIND_LABEL, vias: VIA_LABEL },
+  list: { cols: l.cols, ...page, ord: ls.ord, dir: ls.dir, perPage: PER_PAGE, row: `/pages/email/row-${l.elenco === 'generali' ? 'inviate' : l.elenco}`, kinds: KIND_LABEL, vias: VIA_LABEL },
 });
 
 const bar = (r) => ({ label: r.label, value: r.n });
@@ -131,7 +134,7 @@ export async function email(db, req) {
        FROM email_sends WHERE ${W}`),
     q(perDay(f.giorni, 'email_sends', 'sent_at', [
       ['aperte', `count(*) FILTER (WHERE ${OPENED})`], ['apple', "count(*) FILTER (WHERE via = 'apple')"], ['non_aperte', 'count(*) - count(opened_at)'],
-    ], f.tipo ? `kind = '${f.tipo}'` : 'true')),
+    ], f.tipo ? `kind = '${f.tipo}'` : NOT_GENERAL())),
     q(`SELECT kind, count(*)::int AS inviate, count(*) FILTER (WHERE ${OPENED})::numeric / NULLIF(count(*) FILTER (WHERE ${NO_APPLE}), 0) AS tasso
        FROM email_sends WHERE ${W} GROUP BY 1 ORDER BY 2 DESC`),
     q(`SELECT ${DELAY.label} AS b, count(*)::int AS n FROM (SELECT extract(epoch FROM opened_at - sent_at) / 60 AS m
