@@ -4,15 +4,18 @@
 import logger from '../logger.js';
 import { createCache } from './cache.js';
 import { entityKey, titleCase } from './normalize.js';
+import { checkClasses, inNewYearWindow } from './classesWatch.js';
 
 const log = logger.child('timetable:school');
 
 const BASE_URL = process.env.TIMETABLE_URL || 'https://www.fermimn.edu.it/orario/';
 const TTL_MS = Number(process.env.TIMETABLE_TTL_MS) || 6 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-// Classes/rooms: a month. Teachers (logged-in index): a day, so new ones show up soon.
+// Classes/rooms: a month, but a day from late August to October, when the new school year's
+// classes come out (classesWatch.js then rebuilds the frontend). Teachers (logged-in index):
+// a day, so new ones show up soon.
 const INDEX_TTL_MS = Number(process.env.TIMETABLE_INDEX_TTL_MS) || 30 * DAY_MS;
-const indexTtl = (index) => (index?.teacher?.length ? DAY_MS : INDEX_TTL_MS);
+const indexTtl = (index) => (index?.teacher?.length || inNewYearWindow() ? DAY_MS : INDEX_TTL_MS);
 
 // Public types; 'teacher' exists only on the logged-in site.
 const ENTITY_TYPES = ['class', 'room'];
@@ -182,7 +185,10 @@ export async function getIndex({ authed = false, session } = {}) {
   if (authed && !session) return cachedOnly(indexCache, 'authed');
   const { value, stale } = await indexCache.get(authed ? 'authed' : 'public', async () => {
     log.info('Fetching timetable index', { authed });
-    return parseIndex(await fetchPage('', { authed, session }));
+    const index = parseIndex(await fetchPage('', { authed, session }));
+    // New classes (school year start): rebuild the frontend's class pages. In the background.
+    if (!authed) checkClasses(index);
+    return index;
   });
   if (stale) log.warn('Serving stale timetable index', { authed });
   return value;

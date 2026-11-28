@@ -161,6 +161,15 @@ CREATE TABLE public.email_bounces (
 );
 CREATE INDEX email_bounces_sub ON public.email_bounces (sub_id, at);
 
+-- ── app_state (migration 2026-11-28) ─────────────────────────────────────────
+-- Key/value state that must survive restarts (utils/timetable/classesWatch.js).
+
+CREATE TABLE public.app_state (
+    key        text        PRIMARY KEY,
+    value      text        NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- ── trigger last_login (presente in produzione) ───────────────────────────────
 
 CREATE FUNCTION public.update_last_login() RETURNS trigger

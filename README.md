@@ -122,6 +122,7 @@ Il compose crea la rete `ferminotify-dev` (bridge). Frontend e notifier si aggan
 | `NOTIFICATION_API_KEY` | `dev-broadcast-key` | Chiave per `POST /user/push/notify/broadcast` |
 | `AZURE_EMAIL_CONNECTION_STRING` | *(vuota)* | Lasciare vuota in dev (→ fallback MailPit) |
 | `SMTP_HOST` | `mailpit` | Fallback SMTP dev: se Azure è vuoto, le email vanno qui |
+| `CF_PAGES_DEPLOY_HOOK` | *(non impostata)* | Deploy hook di Cloudflare Pages del frontend: quando cambiano le classi sul sito della scuola (inizio anno) il backend avvia un nuovo build, che rigenera le pagine `/orario/classe/*` e la sitemap. Se assente la funzione è disattivata |
 
 ---
 
